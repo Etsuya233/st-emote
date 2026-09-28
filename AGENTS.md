@@ -2,6 +2,10 @@
 
 开始工作前，先阅读 `~/.agents/AGENTS.md` 并遵循其中的全局规则。
 
+## 开发资料
+
+跨设备通用的开发资料写进 `common_dev.md`（入库跟踪）。只在本机有效、不应入库的内容写进 `local_dev.md`（已被 `.gitignore` 忽略）。
+
 ## Agent skills
 
 ### Issue tracker
