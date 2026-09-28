@@ -28,14 +28,16 @@ test('sortPacks keeps two packs that compare equal in their stored order', () =>
     assert.deepEqual(sortPacks([first, second]), [first, second]);
 });
 
-test('packCoverImage is the first sticker that has a picture', () => {
+test('packCoverImage is the first sticker, and only that one', () => {
     assert.equal(
         packCoverImage({ stickers: [{ image: local('a.png') }, { image: local('b.png') }] }),
         local('a.png'),
     );
+    // A first sticker with no picture does not borrow a later one's: the cover
+    // says what the pack is, and a substitute would be saying something else.
     assert.equal(
         packCoverImage({ stickers: [{ image: '' }, { image: local('b.png') }] }),
-        local('b.png'),
+        '',
     );
     assert.equal(packCoverImage({ stickers: [] }), '');
     assert.equal(packCoverImage({}), '');

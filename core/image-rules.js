@@ -35,11 +35,44 @@ export const IMAGE_FORMATS = {
 };
 
 /**
+ * The media type each accepted format is served as. Kept beside `IMAGE_FORMATS`
+ * because the two lists answer the same question from two directions — the
+ * browser's file dialog needs the types, the endpoint needs the formats — and a
+ * format added to one but not the other would show a user a picker that then
+ * refuses what it offered.
+ */
+const IMAGE_MIME_TYPES = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    gif: 'image/gif',
+};
+
+/**
+ * The value for a file input's `accept` attribute, derived from the formats
+ * above rather than written out again: one list, so the picker cannot offer a
+ * file the rules would then refuse.
+ *
+ * @returns {string}
+ */
+export function acceptedImageTypes() {
+    return [...new Set(Object.keys(IMAGE_FORMATS).map((key) => IMAGE_MIME_TYPES[key]))].join(',');
+}
+
+/**
  * Largest accepted file. A bigger one is rejected outright rather than resized:
  * the spec asks for an explicit refusal with a reason, and it asks for no
  * automatic compression.
  */
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * How the size ceiling is written when it is shown to a user. Derived from
+ * `MAX_IMAGE_BYTES` rather than typed next to it, so raising the limit in one
+ * place cannot leave the message promising a smaller one.
+ */
+export const MAX_IMAGE_LABEL = `${MAX_IMAGE_BYTES / (1024 * 1024)}MB`;
 
 /**
  * Height suggested at upload time. A suggestion and never a rejection — the

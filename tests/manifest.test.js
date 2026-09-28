@@ -8,10 +8,13 @@ import {
     MANIFEST_VERSION,
     archiveImagePath,
     buildManifest,
+    importFailureMessage,
     isSafeArchivePath,
     parseManifest,
     planImport,
+    planPackExport,
 } from '../core/manifest.js';
+import { MAX_IMAGE_BYTES, MAX_IMAGE_LABEL } from '../core/image-rules.js';
 
 let counter = 0;
 const newId = (prefix) => `${prefix}_${(counter += 1)}`;
@@ -21,6 +24,14 @@ const ids = () => {
 
 const json = (value) => JSON.stringify(value);
 const parse = (value) => parseManifest(typeof value === 'string' ? value : json(value));
+
+/**
+ * A stored image path, with the prefix every uploaded file carries.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+const local = (name) => `user/images/st-emote/st-emote-${name}`;
 
 const pack = {
     name: 'daily',
@@ -213,6 +224,29 @@ test('parseManifest refuses a file name that climbs out of the archive', () => {
     );
 });
 
+test('the export plan pairs each archive file with the sticker it came from', () => {
+    // Pairing the two by position would be one skipped sticker away from writing
+    // the wrong picture under the wrong label — and a 外链 is exactly such a
+    // skip, since it contributes no file.
+    const plan = planPackExport({
+        name: 'daily',
+        stickers: [
+            { label: 'a', image: local('a.png') },
+            { label: 'b', image: 'https://example.com/b.png' },
+            { label: 'c', image: local('c.png') },
+        ],
+    });
+    assert.deepEqual(plan.images.map((image) => image.path), [
+        'images/001-a.png',
+        'images/003-c.png',
+    ]);
+    assert.deepEqual(plan.images.map((image) => image.image), [local('a.png'), local('c.png')]);
+    assert.deepEqual(plan.images.map((image) => image.sticker.label), ['a', 'c']);
+    // The manifest still describes all three, the 外链 included.
+    assert.equal(plan.manifest.stickers.length, 3);
+    assert.equal(plan.manifest.stickers[1].url, 'https://example.com/b.png');
+});
+
 test('archiveImagePath numbers the files, names them after the label and keeps the format', () => {
     assert.equal(
         archiveImagePath({ label: 'Big Smile', image: 'user/images/st-emote/x.webp' }, 4),
@@ -233,7 +267,10 @@ test('planImport gives every sticker its own id, so no two can share an image fi
             { label: 'b', description: '', file: 'images/002-b.png' },
         ],
     };
-    const result = planImport(manifest, [], newId);
+    const result = planImport(manifest, [], newId, new Map([
+        ['images/001-a.png', 1024],
+        ['images/002-b.png', 1024],
+    ]));
     const stickerIds = result.pack.stickers.map((sticker) => sticker.id);
     assert.equal(new Set(stickerIds).size, 2);
     // One upload per sticker, each named after its own id: a file name in the
@@ -241,15 +278,97 @@ test('planImport gives every sticker its own id, so no two can share an image fi
     assert.deepEqual(result.uploads.map((upload) => upload.sticker.id), stickerIds);
 });
 
+test('planImport holds an imported image to the same rules a picked file faces', () => {
+    // An import is a way for an arbitrary zip to put bytes into the image
+    // directory. If it skipped the format and size limits, those limits would
+    // only ever have governed manual uploads.
+    const one = (file) => ({
+        format: 'st-emote-pack',
+        version: 1,
+        name: 'incoming',
+        stickers: [{ label: 'a', description: '', file }],
+    });
+
+    ids();
+    assert.deepEqual(
+        planImport(one('images/001-a.bmp'), [], newId, new Map([['images/001-a.bmp', 1024]])),
+        { ok: false, reason: 'unsupported-format' },
+    );
+    assert.deepEqual(
+        planImport(one('images/001-a.svg'), [], newId, new Map([['images/001-a.svg', 1024]])),
+        { ok: false, reason: 'unsupported-format' },
+    );
+    assert.deepEqual(
+        planImport(
+            one('images/001-a.png'),
+            [],
+            newId,
+            new Map([['images/001-a.png', MAX_IMAGE_BYTES + 1]]),
+        ),
+        { ok: false, reason: 'image-too-large' },
+    );
+    // Exactly at the ceiling is still fine, as it is for a picked file.
+    assert.equal(
+        planImport(one('images/001-a.png'), [], newId, new Map([['images/001-a.png', MAX_IMAGE_BYTES]])).ok,
+        true,
+    );
+    // A file the caller could not read is a missing one, never an unchecked one.
+    assert.deepEqual(planImport(one('images/001-a.png'), [], newId, new Map()), {
+        ok: false,
+        reason: 'missing-image',
+    });
+});
+
+test('one bad image refuses the whole pack, with no half-built pack returned', () => {
+    const manifest = {
+        format: 'st-emote-pack',
+        version: 1,
+        name: 'incoming',
+        stickers: [
+            { label: 'fine', description: '', file: 'images/001-fine.png' },
+            { label: 'huge', description: '', file: 'images/002-huge.gif' },
+        ],
+    };
+    const result = planImport(manifest, [], newId, new Map([
+        ['images/001-fine.png', 1024],
+        ['images/002-huge.gif', MAX_IMAGE_BYTES + 1],
+    ]));
+    // Nothing at all comes back, so the caller has nothing to clean up: a
+    // half-imported pack is one the user did not choose.
+    assert.deepEqual(result, { ok: false, reason: 'image-too-large' });
+    assert.equal(result.pack, undefined);
+    assert.equal(result.uploads, undefined);
+});
+
+test('every refusal reason has a sentence the panel can show', () => {
+    for (const reason of [
+        'not-a-zip', 'no-manifest', 'not-a-pack', 'unsupported-version', 'name-taken',
+        'missing-image', 'unsupported-format', 'image-too-large',
+    ]) {
+        const message = importFailureMessage(reason);
+        assert.equal(typeof message, 'string');
+        assert.notEqual(message.includes(reason), true, reason);
+    }
+    assert.match(importFailureMessage('image-too-large'), new RegExp(MAX_IMAGE_LABEL));
+});
+
 test('planImport refuses a pack whose name is already taken, in any spelling', () => {
     ids();
-    const result = planImport(parse(buildManifest(pack)).manifest, [{ name: 'Daily', stickers: [] }], newId);
+    const result = planImport(
+        parse(buildManifest(pack)).manifest,
+        [{ name: 'Daily', stickers: [] }],
+        newId,
+        new Map([[`${IMAGE_FOLDER}/001-happy.png`, 2048]]),
+    );
     assert.deepEqual(result, { ok: false, reason: 'name-taken' });
 });
 
 test('planImport builds a pack with fresh ids and lists the uploads it still needs', () => {
     ids();
-    const result = planImport(parse(buildManifest(pack)).manifest, [], newId);
+    const manifest = parse(buildManifest(pack)).manifest;
+    const result = planImport(manifest, [], newId, new Map([
+        [`${IMAGE_FOLDER}/001-happy.png`, 2048],
+    ]));
 
     assert.equal(result.ok, true);
     assert.equal(result.pack.name, 'daily');

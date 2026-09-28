@@ -54,8 +54,8 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 
 ### 代码布局
 
-- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的清单格式（`manifest.js`）。
-- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层，`restore.js` 管关闭扩展时的还原。票 06 起 `upload.js` 只剩三个图片接口的调用（上传 / 删除 / 列出），`archive.js` 负责 zip 字节的读写。
+- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）。
+- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层，`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。`ui.js` 只剩表情包的列表与行。
 - `tests/`：纯核心测试 + 共享契约 + 两条适配层的对照与生命周期测试 + 面板与压缩包的集成测试。
 
 ### 图片的存储与生命周期（票 06）
@@ -64,7 +64,7 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 - **归属判定只有一条依据**：目录 + `st-emote-` 前缀（`isOwnImagePath`）。删除前一律先过它——目录是别的特性的，绝不删不是自己创建的文件。
 - 「一张图只被一个表情用」是上面那条命名的推论，没有单独实现。
 - 缺图的检测时机：面板挂载时取一次目录列表，之后在上传 / 删除 / 导入之后刷新。取不到列表时**不**报缺图（宁可不说，也不把整个库标灰）。外链不参与判定——它不是本机的文件。
-- 压缩包读写用 ST 自带的 `/lib/jszip.min.js`（`await import()` 装全局），**不新增运行时依赖**。清单的校验在 `core/manifest.js`，压缩包是外来输入，一条不过就整包拒收。
+- 压缩包读写用 ST 自带的 `/lib/jszip.min.js`（`await import()` 装全局），**运行时不新增依赖**。**包清单**（导出包里的 `st-emote.json`，注意与 `CONTEXT.md` 里的「清单 / Listing」是不同词：那个是宏输出）的校验在 `core/manifest.js`，压缩包是外来输入，一条不过就整包拒收——**包括图片格式与体积**：导入走的是同一套 `core/image-rules.js` 规则，不是一个绕过它们的洞。
 
 ### 两条渲染路径（ADR-0002）
 
@@ -86,7 +86,7 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - 共享的断言契约在 `tests/contract/render-contract.js`：只断言最终 DOM 的结构、类名、`data-*` 与尺寸样式，不断言实现方式。里面 `applySanitizerClassPrefix` 是**唯一**模拟的客户端行为（净化补 `custom-` 前缀），需要在 1.19+ 上目视核对。
 - 路径与生命周期：`tests/dom-path.test.js`、`tests/hook-path.test.js`、`tests/entry.test.js`。`tests/contract/st-dom.js` 只伪造客户的接口面（`getContext`、事件总线、`updateMessageBlock`、图片端点的 `fetch`），DOM 本身是真的。
 - 票 06 的纯核心：`tests/image-rules.test.js`、`tests/catalogue.test.js`、`tests/manifest.test.js`、`tests/library.test.js`。
-- 票 06 的适配层：`tests/panel.test.js`（真 jsdom 面板，驱动真实的 `adapter/ui.js`）与 `tests/archive.test.js`（真 zip 往返）。两者共用 `tests/contract/st-dom.js` 里的 `withJsZip`——它找本机 SillyTavern 的 `public/lib/jszip.min.js`（可用 `SILLYTAVERN_PATH` 指定），**找不到就 skip 而不是拿别的库凑数**。
+- 票 06 的适配层：`tests/panel.test.js`（真 jsdom 面板，驱动真实的 `adapter/ui.js`）与 `tests/archive.test.js`（真 zip 往返）。两者共用 `tests/contract/st-dom.js` 里的 `withJsZip`——它用 **devDependency `jszip`** 装出那个全局，**没有任何 skip 路径**：一套会静默跳过的导出/导入测试，等于一次什么都不证明的绿色 `npm test`。运行时仍然读客户自带的 `/lib/jszip.min.js`。
 - 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀。
 
 ## 待补充

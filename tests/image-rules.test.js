@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import {
     IMAGE_FILE_PREFIX,
     MAX_IMAGE_BYTES,
+    MAX_IMAGE_LABEL,
     SUGGESTED_MAX_HEIGHT_PX,
     acceptImageFile,
+    acceptedImageTypes,
     exceedsSuggestedHeight,
     imageFormatOf,
     isExternalImageUrl,
@@ -49,6 +51,19 @@ test('acceptImageFile refuses a file over 5MB and accepts exactly 5MB', () => {
         reason: 'too-large',
     });
     assert.equal(acceptImageFile(file('a.gif', MAX_IMAGE_BYTES)).ok, true);
+});
+
+test('the picker’s accept list is derived from the accepted formats', () => {
+    // One list, so the file dialog cannot offer a file the rules would refuse.
+    const types = acceptedImageTypes().split(',');
+    assert.deepEqual(types.sort(), ['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+    // `jpeg` and `jpg` are the same type, so the type list is shorter than the
+    // extension list and must not repeat itself.
+    assert.equal(new Set(types).size, types.length);
+});
+
+test('the size the user is shown comes from the size the rules enforce', () => {
+    assert.equal(MAX_IMAGE_LABEL, `${MAX_IMAGE_BYTES / (1024 * 1024)}MB`);
 });
 
 test('exceedsSuggestedHeight flags only images taller than the suggestion', () => {

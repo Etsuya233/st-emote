@@ -14,8 +14,6 @@
  * fake has to reproduce it faithfully.
  */
 
-import { readFile } from 'node:fs/promises';
-
 import { JSDOM } from 'jsdom';
 
 import { STORAGE_KEY } from '../../adapter/settings.js';
@@ -67,59 +65,32 @@ export async function withPanel(body) {
 }
 
 /**
- * Run `body` with the zip library the client's checkout ships, installed as the
- * global the adapter's lazy import produces.
+ * Run `body` with a JSZip installed as the global the adapter's lazy import
+ * produces.
  *
- * The extension deliberately carries no dependency of its own, so the only
- * honest way to test the archive code is against the copy the client actually
- * serves. When no checkout can be found the suite **skips**: a green run against
- * a substitute would prove nothing about the real library. Point
- * `SILLYTAVERN_PATH` at a checkout to make sure it runs.
+ * The **runtime** has no dependency of its own: `adapter/archive.js` loads
+ * `/lib/jszip.min.js` out of the client. The tests get the same library from the
+ * `jszip` **devDependency** instead, so the archive guarantee is exercised on
+ * every machine rather than only where a SillyTavern checkout happens to sit
+ * next to the repo. It is the same library and the same API; only the delivery
+ * differs, and the delivery is not what these tests are about.
+ *
+ * There is deliberately no skip path here. A silently skipped export/import
+ * suite is a green `npm test` that proves nothing about the one feature the
+ * ticket exists to add.
  *
  * @param {import('node:test').TestContext} t
  * @param {(JSZip: any) => void|Promise<void>} body
  */
 export async function withJsZip(t, body) {
-    const source = await findJsZipSource();
-    if (source === null) {
-        t.skip('no SillyTavern checkout found; set SILLYTAVERN_PATH to run the archive tests');
-        return;
-    }
     const previous = globalThis.JSZip;
-    // The library file is a plain script that publishes a global, so it is
-    // evaluated rather than imported: that is exactly how the client loads it.
-    new Function('window', 'self', source)(globalThis, globalThis);
+    const { default: JSZip } = await import('jszip');
+    globalThis.JSZip = JSZip;
     try {
-        await body(globalThis.JSZip);
+        await body(JSZip);
     } finally {
         globalThis.JSZip = previous;
     }
-}
-
-let jsZipSource;
-
-/**
- * @returns {Promise<string|null>}
- */
-async function findJsZipSource() {
-    if (jsZipSource !== undefined) {
-        return jsZipSource;
-    }
-    const candidates = [
-        process.env.SILLYTAVERN_PATH,
-        new URL('../../SillyTavern/public/lib/jszip.min.js', import.meta.url),
-        new URL('../../../SillyTavern/public/lib/jszip.min.js', import.meta.url),
-    ].filter(Boolean);
-    jsZipSource = null;
-    for (const candidate of candidates) {
-        try {
-            jsZipSource = await readFile(candidate, 'utf8');
-            break;
-        } catch {
-            // Try the next candidate.
-        }
-    }
-    return jsZipSource;
 }
 
 /**

@@ -38,6 +38,21 @@ test('replaceStickerImage has no previous file to delete for a new or external s
     );
 });
 
+test('replaceStickerImage never hands back the file it just stored', () => {
+    // The upload endpoint re-appends the format's extension, so replacing a png
+    // with a png lands on the same path. Handing that path back as "the old
+    // file" would have the caller delete the image it had just written.
+    const sticker = { label: 'happy', description: 'a grin', image: local('st-emote-a.png') };
+    assert.equal(replaceStickerImage(sticker, local('st-emote-a.png')), '');
+    assert.equal(sticker.image, local('st-emote-a.png'));
+    assert.equal(sticker.label, 'happy');
+    assert.equal(sticker.description, 'a grin');
+
+    // A genuinely different file is still handed back, so cleanup does not stop
+    // working the moment the naming is fixed.
+    assert.equal(replaceStickerImage(sticker, local('st-emote-b.png')), local('st-emote-a.png'));
+});
+
 test('ownImageFilesOf lists only the extension’s own files, without duplicates', () => {
     const stickers = [
         { image: local('st-emote-a.png') },

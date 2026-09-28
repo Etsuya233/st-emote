@@ -150,6 +150,53 @@ test('a pack whose images are all present is not greyed', async () => {
     });
 });
 
+test('importing a pack with an image the rules refuse stores nothing', async (t) => {
+    // The import is a way for an arbitrary zip to put bytes into the image
+    // directory; if it skipped the format and size limits, those limits would
+    // only ever have governed manual uploads.
+    for (const [label, file, payload, expected] of [
+        ['a bmp', 'images/001-a.bmp', 'bytes', /not a png, jpg, webp or gif/],
+        ['an oversized gif', 'images/001-a.gif', 'x'.repeat(6 * 1024 * 1024), /larger than 5MB/],
+    ]) {
+        const fetchImpl = fakeFetch({
+            list: { body: ['st-emote-d1.png', 'st-emote-d2.png'] },
+            upload: { body: { path: 'user/images/st-emote/st-emote-x.png' } },
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await withJsZip(t, async (JSZip) => {
+            const zip = new JSZip();
+            zip.file('st-emote.json', JSON.stringify({
+                format: 'st-emote-pack',
+                version: 1,
+                name: 'incoming',
+                stickers: [{ label: 'a', description: '', file }],
+            }));
+            zip.file(file, payload);
+            const bytes = new Uint8Array(
+                await (await zip.generateAsync({ type: 'blob' })).arrayBuffer(),
+            );
+
+            // eslint-disable-next-line no-await-in-loop
+            await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings, toasts }) => {
+                const picker = document.querySelector('#st_emote_import_pack').nextElementSibling;
+                const chosen = new globalThis.window.File([bytes], 'incoming.zip');
+                Object.defineProperty(picker, 'files', { value: [chosen], configurable: true });
+                picker.dispatchEvent(new globalThis.window.Event('change'));
+                // eslint-disable-next-line no-await-in-loop
+                await waitFor(() => toasts.length > 0, `the import of ${label} to be refused`);
+
+                assert.equal(
+                    extensionSettings[STORAGE_KEY].packs.some((pack) => pack.name === 'incoming'),
+                    false,
+                    `a pack with ${label} was added`,
+                );
+                assert.equal(fetchImpl.calls.some((call) => call.url.endsWith('/upload')), false);
+                assert.match(toasts.at(-1)[1], expected);
+            });
+        });
+    }
+});
+
 test('a URL that is not an http address is refused', async () => {
     await withPanelMounted({}, async ({ document, extensionSettings, toasts }) => {
         globalThis.prompt = () => 'javascript:alert(1)';
@@ -330,6 +377,65 @@ test('adding a URL sticker stores the address and marks it 外链', async () => 
     });
 });
 
+test('replacing a sticker image keeps the label and description and drops the old file', async () => {
+    const fetchImpl = fakeFetch({
+        list: { body: ['st-emote-d1.png', 'st-emote-d2.png'] },
+        // The real endpoint re-appends the format's extension, so each upload
+        // lands on a fresh name; the sticker id keeps it identifiable as ours.
+        upload: (body) => ({
+            body: { path: `user/images/st-emote/st-emote-d1-${body.image.slice(0, 4)}.${body.format}` },
+        }),
+        remove: { status: 200 },
+    });
+    await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
+        const picker = stickerRow(document, 'daily', 'happy').querySelector('input[type=file]');
+        const file = new globalThis.window.File(['new'], 'new.png', { type: 'image/png' });
+        Object.defineProperty(picker, 'files', { value: [file], configurable: true });
+        picker.dispatchEvent(new globalThis.window.Event('change'));
+        await settle();
+
+        const sticker = extensionSettings[STORAGE_KEY].packs
+            .find((pack) => pack.name === 'daily').stickers[0];
+        assert.equal(sticker.label, 'happy');
+        assert.equal(sticker.description, 'a wide grin');
+        assert.notEqual(sticker.image, local('d1.png'));
+
+        const deleted = fetchImpl.calls.filter((call) => call.url.endsWith('/delete'));
+        assert.deepEqual(deleted.map((call) => call.body.path), [local('d1.png')]);
+    });
+});
+
+test('a replace that lands on the same path does not delete the image it just wrote', async () => {
+    // The regression: the endpoint strips the extension off the name it is given
+    // and re-appends the format's, so a png→png replace can land on the very
+    // same path. Deleting "the old file" then deletes the new image, and the
+    // sticker is left pointing at a file that is no longer there.
+    const fetchImpl = fakeFetch({
+        list: { body: ['st-emote-d1.png', 'st-emote-d2.png'] },
+        upload: { body: { path: local('d1.png') } },
+        remove: { status: 200 },
+    });
+    await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
+        const picker = stickerRow(document, 'daily', 'happy').querySelector('input[type=file]');
+        const file = new globalThis.window.File(['new'], 'new.png', { type: 'image/png' });
+        Object.defineProperty(picker, 'files', { value: [file], configurable: true });
+        picker.dispatchEvent(new globalThis.window.Event('change'));
+        await settle();
+
+        const sticker = extensionSettings[STORAGE_KEY].packs
+            .find((pack) => pack.name === 'daily').stickers[0];
+        assert.equal(sticker.image, local('d1.png'));
+        // Nothing was deleted: the file the sticker points at is the file that
+        // was just written.
+        assert.equal(fetchImpl.calls.some((call) => call.url.endsWith('/delete')), false);
+        // And the pack does not grey out as a result.
+        assert.equal(
+            packByName(document, 'daily').classList.contains('st-emote-pack-missing'),
+            false,
+        );
+    });
+});
+
 test('renaming a label that only changes its spelling warns about nothing', async () => {
     await withPanelMounted({}, async ({ document, toasts, extensionSettings }) => {
         const input = packByName(document, 'daily').querySelector('.st-emote-label');
@@ -479,4 +585,24 @@ async function settle() {
     for (let turn = 0; turn < 6; turn += 1) {
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
+}
+
+/**
+ * Wait until the panel has said something, rather than for a fixed number of
+ * turns. A turn count is a guess that is wrong for exactly the slow cases, and
+ * a wrong guess here does not just fail — the work is still in flight when the
+ * next test swaps out `window.toastr`, and this test's message lands in that
+ * one's assertions.
+ *
+ * @param {() => boolean} done
+ * @param {string} what - What was being waited for, for the failure message.
+ */
+async function waitFor(done, what) {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+        if (done()) {
+            return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.fail(`timed out waiting for ${what}`);
 }

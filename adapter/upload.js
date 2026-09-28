@@ -9,57 +9,27 @@
  */
 
 import {
-    IMAGE_DIR,
     IMAGE_FILE_PREFIX,
     IMAGE_SUBFOLDER,
-    MAX_IMAGE_BYTES,
+    MAX_IMAGE_LABEL,
     acceptImageFile,
-    imageFormatOf,
     ownImageFileName,
 } from '../core/image-rules.js';
-import { MANIFEST_FILE } from '../core/manifest.js';
-
-export { IMAGE_DIR, IMAGE_FILE_PREFIX, IMAGE_SUBFOLDER, MAX_IMAGE_BYTES, imageFormatOf };
+import { newId } from './settings.js';
 
 /**
- * The reason an upload was refused, in words the panel can show as-is.
+ * The reason an upload was refused, in words the panel can show as-is. The size
+ * in the sentence is the core's `MAX_IMAGE_LABEL`, so the two cannot drift.
  *
  * @param {string} reason - An `ImageAcceptance` reason.
  * @returns {string}
  */
 export function uploadRefusalMessage(reason) {
     if (reason === 'too-large') {
-        return 'larger than 5MB — pick a smaller file (this extension does not compress images)';
+        return `larger than ${MAX_IMAGE_LABEL} — pick a smaller file `
+            + '(this extension does not compress images)';
     }
     return 'not a png, jpg, webp or gif';
-}
-
-/**
- * The reasons an archive could not be read, in the panel's words. They exist
- * one-for-one with what `core/manifest.js` can reject, so a file from someone
- * else is refused for a stated reason rather than failing somewhere deep in a
- * zip reader.
- *
- * @param {string} reason
- * @returns {string}
- */
-export function importFailureMessage(reason) {
-    switch (reason) {
-        case 'not-a-zip':
-            return 'that file is not a readable zip archive';
-        case 'no-manifest':
-            return `that zip has no ${MANIFEST_FILE} in it, so it is not a st-emote pack`;
-        case 'not-a-pack':
-            return 'that zip was not made by st-emote';
-        case 'unsupported-version':
-            return 'that pack was made by a newer version of st-emote';
-        case 'name-taken':
-            return 'a pack with that name already exists; rename or delete it first';
-        case 'missing-image':
-            return 'that pack is incomplete: one of its image files is missing from the zip';
-        default:
-            return `that pack could not be read (${reason})`;
-    }
 }
 
 /**
@@ -84,6 +54,28 @@ export async function uploadStickerImage(context, file, stickerId) {
 }
 
 /**
+ * The file name one upload is stored under.
+ *
+ * The random tail is what makes a **replace** safe. The endpoint strips the
+ * extension off whatever name it is given and re-appends the format's, so a
+ * name of `st-emote-<id>` alone would make a png→png replace land on the *same*
+ * path: the old file would be overwritten rather than replaced, and there would
+ * be no "old" file left to clean up. A fresh name per upload keeps the two
+ * distinct, so the previous image is a real file that can really be deleted.
+ *
+ * The sticker id stays in the name because that is what makes the file
+ * identifiable as ours (ADR-0003) and what keeps one sticker's image from being
+ * reachable as another's.
+ *
+ * @param {string} stickerId
+ * @returns {string}
+ */
+export function imageFileName(stickerId) {
+    return `${IMAGE_FILE_PREFIX}${String(stickerId ?? '').replace(/[^\w-]/g, '')}`
+        + `-${newId('img').replace(/^img_/, '')}`;
+}
+
+/**
  * Store already-encoded image bytes.
  *
  * The step an import takes: the bytes come out of a zip rather than off the
@@ -104,7 +96,7 @@ export async function uploadImage(context, base64, format, stickerId) {
         image: base64,
         format,
         ch_name: IMAGE_SUBFOLDER,
-        filename: `${IMAGE_FILE_PREFIX}${stickerId}`,
+        filename: imageFileName(stickerId),
     });
 
     if (!data || typeof data.path !== 'string' || data.path === '') {

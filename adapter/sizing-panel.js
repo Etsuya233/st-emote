@@ -1,0 +1,234 @@
+/**
+ * The 投放方式 and 尺寸 controls, as DOM.
+ *
+ * Split out of the settings panel because it is the one part of it that answers
+ * a different question: the pack list is about *which* stickers exist, this is
+ * about *how big and where* a rendered one lands. The rules are unchanged and
+ * still live in `core/placement.js` and `core/size.js`; what lives here is the
+ * controls, their labels, and the one hint that goes wrong when a hand-typed
+ * size is not a size.
+ *
+ * The two 尺寸集 are enumerated from `SIZE_SETS` and the fields from
+ * `SIZE_FIELDS`, so a value added to the core appears here without anyone editing
+ * this file.
+ */
+
+import { PLACEMENTS } from '../core/placement.js';
+import {
+    FIT_MODES,
+    SIZE_FIELDS,
+    SIZE_SETS,
+    defaultSizeValue,
+    validateFitMode,
+    validateSizeValue,
+} from '../core/size.js';
+import { LOG_PREFIX } from './render-common.js';
+import { ensureSettings } from './settings.js';
+
+/** Labels for the 投放方式, including the "follow the global setting" choice a
+ * single sticker's override starts from. */
+const PLACEMENT_LABELS = {
+    'in-place': 'In place',
+    'after-block': 'After the block',
+    'message-end': 'End of message',
+};
+
+const PLACEMENT_FOLLOW_LABEL = 'Follow the global setting';
+
+const SIZE_SET_TITLES = {
+    inline: 'Inline size (in place)',
+    block: 'Block size (after the block / end of message)',
+};
+
+const SIZE_FIELD_LABELS = {
+    minWidth: 'Min width',
+    minHeight: 'Min height',
+    maxWidth: 'Max width',
+    maxHeight: 'Max height',
+    fit: 'Fill',
+};
+
+const SIZE_VALUE_HINT = 'needs a number with em, px or %';
+
+/**
+ * @param {any} context
+ * @param {() => void} onChange - Called after any change, to save and repaint.
+ */
+export function mountSizingSection(context, root, onChange) {
+    const settings = ensureSettings(context);
+    const select = root.querySelector('#st_emote_placement');
+    for (const placement of PLACEMENTS) {
+        select.append(option(placement, PLACEMENT_LABELS[placement]));
+    }
+    select.value = settings.placement;
+    select.addEventListener('change', () => {
+        ensureSettings(context).placement = select.value;
+        onChange();
+    });
+
+    const sizes = root.querySelector('#st_emote_sizes');
+    for (const sizeSet of SIZE_SETS) {
+        sizes.append(buildSizeSet(context, sizeSet, settings, onChange));
+    }
+}
+
+/**
+ * The per-sticker 投放方式 override. An empty value means the sticker follows
+ * the global setting; anything else also switches it to the other size set.
+ *
+ * @param {any} context
+ * @param {import('./settings.js').StickerRecord} sticker
+ * @param {() => void} onChange
+ * @returns {Element}
+ */
+export function buildStickerPlacementSelect(context, sticker, onChange) {
+    const select = document.createElement('select');
+    select.className = 'text_pole st-emote-sticker-placement';
+    select.title = 'Placement override for this sticker';
+    select.append(option('', PLACEMENT_FOLLOW_LABEL));
+    for (const placement of PLACEMENTS) {
+        select.append(option(placement, PLACEMENT_LABELS[placement]));
+    }
+    select.value = sticker.placement ?? '';
+    select.addEventListener('change', () => {
+        sticker.placement = select.value;
+        onChange();
+    });
+    return select;
+}
+
+/**
+ * One 尺寸集: its hand-typed bounds plus its fill mode.
+ *
+ * @param {any} context
+ * @param {import('../core/size.js').SizeSetKey} sizeSet
+ * @param {import('./settings.js').Settings} settings
+ * @param {() => void} onChange
+ * @returns {Element}
+ */
+function buildSizeSet(context, sizeSet, settings, onChange) {
+    const group = document.createElement('div');
+    group.className = 'st-emote-size-set';
+
+    const title = document.createElement('div');
+    title.className = 'st-emote-size-set-title';
+    title.textContent = SIZE_SET_TITLES[sizeSet];
+    group.append(title);
+
+    const fields = document.createElement('div');
+    fields.className = 'st-emote-size-fields';
+    group.append(fields);
+
+    for (const field of SIZE_FIELDS) {
+        if (field === 'fit') {
+            fields.append(buildFitField(settings.sizes[sizeSet].fit, (fit) => {
+                ensureSettings(context).sizes[sizeSet].fit = fit;
+                onChange();
+            }));
+            continue;
+        }
+        const { wrapper, input, hint } = buildSizeInput(
+            SIZE_FIELD_LABELS[field],
+            defaultSizeValue(sizeSet, field) || '—',
+        );
+        input.value = settings.sizes[sizeSet][field];
+        input.addEventListener('change', () => {
+            const result = validateSizeValue(input.value);
+            // Stored verbatim, valid or not: an unusable value is treated as
+            // unset while rendering, and the user keeps what they typed.
+            ensureSettings(context).sizes[sizeSet][field] = input.value;
+            if (result.ok) {
+                showFieldHint(input, hint, '');
+            } else {
+                showFieldHint(input, hint, SIZE_VALUE_HINT);
+                console.info(
+                    `${LOG_PREFIX} ${sizeSet} ${field} "${input.value}" is not a size; using the default instead`,
+                );
+            }
+            onChange();
+        });
+        // A value that was left invalid stays visible as such across a reload.
+        if (!validateSizeValue(input.value).ok) {
+            showFieldHint(input, hint, SIZE_VALUE_HINT);
+        }
+        fields.append(wrapper);
+    }
+
+    return group;
+}
+
+/**
+ * The fill-mode control: a `<select>`, because the three modes are a closed set
+ * rather than something to hand-type.
+ *
+ * @param {import('../core/size.js').SizeSet} stored
+ * @param {(fit: string) => void} onChange
+ * @returns {Element}
+ */
+function buildFitField(stored, onChange) {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'st-emote-field';
+
+    const caption = document.createElement('span');
+    caption.textContent = SIZE_FIELD_LABELS.fit;
+
+    const select = document.createElement('select');
+    select.className = 'text_pole';
+    select.append(option('', 'default'));
+    for (const mode of FIT_MODES) {
+        select.append(option(mode, mode));
+    }
+    const check = validateFitMode(stored.fit);
+    select.value = check.ok ? check.value : '';
+    select.addEventListener('change', () => onChange(select.value));
+
+    wrapper.append(caption, select);
+    return wrapper;
+}
+
+/**
+ * One hand-typed size field with its own hint.
+ *
+ * @param {string} label
+ * @param {string} placeholder
+ * @returns {{wrapper: Element, input: HTMLInputElement, hint: Element}}
+ */
+function buildSizeInput(label, placeholder) {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'st-emote-field';
+
+    const caption = document.createElement('span');
+    caption.textContent = label;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'text_pole st-emote-size';
+    input.placeholder = placeholder;
+
+    const hint = document.createElement('span');
+    hint.className = 'st-emote-field-hint';
+
+    wrapper.append(caption, input, hint);
+    return { wrapper, input, hint };
+}
+
+/**
+ * @param {string} value
+ * @param {string} label
+ * @returns {HTMLOptionElement}
+ */
+function option(value, label) {
+    const element = document.createElement('option');
+    element.value = value;
+    element.textContent = label;
+    return element;
+}
+
+/**
+ * @param {string} hint - Empty hides the hint and clears the invalid state.
+ */
+function showFieldHint(input, hintElement, hint) {
+    hintElement.textContent = hint;
+    hintElement.classList.toggle('st-emote-hint-bad', hint !== '');
+    input.classList.toggle('st-emote-input-bad', hint !== '');
+}

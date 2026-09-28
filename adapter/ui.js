@@ -29,31 +29,24 @@ import {
 } from '../core/library.js';
 import {
     SUGGESTED_MAX_HEIGHT_PX,
+    acceptedImageTypes,
     exceedsSuggestedHeight,
     isExternalImageUrl,
     validateExternalImageUrl,
 } from '../core/image-rules.js';
 import { normalizeLabel } from '../core/normalize.js';
-import { planImport } from '../core/manifest.js';
-import { PLACEMENTS } from '../core/placement.js';
-import {
-    FIT_MODES,
-    SIZE_FIELDS,
-    SIZE_SETS,
-    defaultSizeValue,
-    validateFitMode,
-    validateSizeValue,
-} from '../core/size.js';
+import { importFailureMessage, planImport } from '../core/manifest.js';
 import { buildPackArchive, downloadBlob, readPackArchive } from './archive.js';
+import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
 import { LOG_PREFIX } from './render-common.js';
 import { clearContextRegexJson } from './regex.js';
+import { buildStickerPlacementSelect, mountSizingSection } from './sizing-panel.js';
 import {
     collectCharacterPackNames,
     getChatScope,
     getCurrentCharacter,
     getCurrentCharacterScope,
-    liveContext,
     missingPackNames,
     setChatScope,
     setCurrentCharacterScope,
@@ -70,14 +63,14 @@ import {
 import {
     deleteStickerImage,
     imageFileChecker,
-    importFailureMessage,
     listOwnImageFiles,
     uploadImage,
     uploadRefusalMessage,
     uploadStickerImage,
 } from './upload.js';
 
-const ACCEPTED_MIME = 'image/png,image/jpeg,image/webp,image/gif';
+/** The file dialog's filter, derived from the rules rather than written out. */
+const ACCEPTED_MIME = acceptedImageTypes();
 
 const CONSTRAINT_REASONS = {
     empty: 'cannot be empty',
@@ -156,19 +149,6 @@ function checkLabel(pack, value, except) {
 }
 
 /**
- * @param {'success'|'warning'|'error'} kind
- * @param {string} message
- */
-function toast(kind, message) {
-    const toastr = window.toastr;
-    if (toastr && typeof toastr[kind] === 'function') {
-        toastr[kind](message, 'st-emote');
-        return;
-    }
-    console.info(`${LOG_PREFIX} ${message}`);
-}
-
-/**
  * @param {any} context
  */
 function saveAndRefresh(context) {
@@ -192,48 +172,6 @@ async function refreshStoredImages(context) {
  */
 function stickerImageMissing(sticker) {
     return isStickerImageMissing(sticker, imageFileChecker(storedImageFiles));
-}
-
-/**
- * Ask the user to confirm something, through the client's own dialog when it
- * offers one. Falls back to the browser's `confirm` so the panel still works on
- * a client that does not expose the popup API.
- *
- * @param {any} context
- * @param {string} message
- * @returns {Promise<boolean>}
- */
-async function confirmWithUser(context, message) {
-    // Read through `liveContext`: the context captured when the extension loaded
-    // can be stale, and the client's popup helpers are the kind of thing a
-    // rebound context replaces.
-    const live = liveContext(context);
-    const popup = live?.callGenericPopup;
-    if (typeof popup === 'function' && live?.POPUP_TYPE?.CONFIRM) {
-        const result = await popup.call(live, message, live.POPUP_TYPE.CONFIRM);
-        return result === (live.POPUP_RESULT?.AFFIRMATIVE ?? 1);
-    }
-    return globalThis.confirm?.(message) === true;
-}
-
-/**
- * Ask the user for a line of text, through the client's own dialog when it
- * offers one.
- *
- * @param {any} context
- * @param {string} message
- * @param {string} [defaultValue]
- * @returns {Promise<string|null>}
- */
-async function askForText(context, message, defaultValue = '') {
-    const live = liveContext(context);
-    const popup = live?.callGenericPopup;
-    if (typeof popup === 'function' && live?.POPUP_TYPE?.INPUT) {
-        const result = await popup.call(live, message, live.POPUP_TYPE.INPUT, defaultValue);
-        return typeof result === 'string' ? result : null;
-    }
-    const answer = globalThis.prompt?.(message, defaultValue);
-    return answer === null ? null : answer;
 }
 
 /**
@@ -356,7 +294,7 @@ export function mountSettingsPanel(context) {
         saveAndRefresh(context);
     });
 
-    mountPlacementSection(context, root);
+    mountSizingSection(context, root, () => saveAndRefresh(context));
 
     const nameInput = root.querySelector('#st_emote_new_pack');
     const createButton = root.querySelector('#st_emote_create_pack');
@@ -413,242 +351,12 @@ function mountImportButton(context, root, refresh) {
     button.after(fileInput);
 }
 
-/**
- * Labels for the 投放方式, including the "follow the global setting" choice a
- * single sticker's override starts from.
- */
-const PLACEMENT_LABELS = {
-    'in-place': 'In place',
-    'after-block': 'After the block',
-    'message-end': 'End of message',
-};
-
-const PLACEMENT_FOLLOW_LABEL = 'Follow the global setting';
-
-const SIZE_SET_TITLES = {
-    inline: 'Inline size (in place)',
-    block: 'Block size (after the block / end of message)',
-};
-
-const SIZE_FIELD_LABELS = {
-    minWidth: 'Min width',
-    minHeight: 'Min height',
-    maxWidth: 'Max width',
-    maxHeight: 'Max height',
-    fit: 'Fill',
-};
-
-const SIZE_VALUE_HINT = 'needs a number with em, px or %';
 
 /** How each `PACK_STATES` value reads in the list. */
 const PACK_STATE_LABELS = {
     [PACK_STATES.empty]: '空',
     [PACK_STATES.imagesMissing]: '图片未同步',
 };
-
-/**
- * @param {string} value
- * @param {string} label
- * @returns {HTMLOptionElement}
- */
-function option(value, label) {
-    const element = document.createElement('option');
-    element.value = value;
-    element.textContent = label;
-    return element;
-}
-
-/**
- * @param {string} hint - Empty hides the hint and clears the invalid state.
- */
-function showFieldHint(input, hintElement, hint) {
-    hintElement.textContent = hint;
-    hintElement.classList.toggle('st-emote-hint-bad', hint !== '');
-    input.classList.toggle('st-emote-input-bad', hint !== '');
-}
-
-/**
- * One hand-typed size field with its own hint. The typed text is stored as
- * written even when it is invalid: an unusable value is treated as unset while
- * rendering, and the user keeps what they typed so they can fix it.
- *
- * @param {string} label
- * @param {string} placeholder
- * @returns {{wrapper: Element, input: HTMLInputElement, hint: Element}}
- */
-function buildSizeInput(label, placeholder) {
-    const wrapper = document.createElement('label');
-    wrapper.className = 'st-emote-field';
-
-    const caption = document.createElement('span');
-    caption.textContent = label;
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'text_pole st-emote-size';
-    input.placeholder = placeholder;
-
-    const hint = document.createElement('span');
-    hint.className = 'st-emote-field-hint';
-
-    wrapper.append(caption, input, hint);
-    return { wrapper, input, hint };
-}
-
-/**
- * The fill-mode control: a `<select>`, because the three modes are a closed
- * set rather than something to hand-type.
- *
- * @param {import('../core/size.js').SizeSet} stored
- * @param {(fit: string) => void} onChange
- * @returns {Element}
- */
-function buildFitField(stored, onChange) {
-    const wrapper = document.createElement('label');
-    wrapper.className = 'st-emote-field';
-
-    const caption = document.createElement('span');
-    caption.textContent = SIZE_FIELD_LABELS.fit;
-
-    const select = document.createElement('select');
-    select.className = 'text_pole';
-    select.append(option('', 'default'));
-    for (const mode of FIT_MODES) {
-        select.append(option(mode, mode));
-    }
-    const check = validateFitMode(stored.fit);
-    select.value = check.ok ? check.value : '';
-    select.addEventListener('change', () => onChange(select.value));
-
-    wrapper.append(caption, select);
-    return wrapper;
-}
-
-/**
- * One 尺寸集: its hand-typed bounds plus its fill mode. The field list comes
- * from `SIZE_FIELDS`, so a field added to the core shows up here on its own.
- *
- * @param {any} context
- * @param {import('../core/size.js').SizeSetKey} sizeSet
- * @param {import('./settings.js').Settings} settings
- * @returns {Element}
- */
-function buildSizeSet(context, sizeSet, settings) {
-    const group = document.createElement('div');
-    group.className = 'st-emote-size-set';
-
-    const title = document.createElement('div');
-    title.className = 'st-emote-size-set-title';
-    title.textContent = SIZE_SET_TITLES[sizeSet];
-    group.append(title);
-
-    const fields = document.createElement('div');
-    fields.className = 'st-emote-size-fields';
-    group.append(fields);
-
-    for (const field of SIZE_FIELDS) {
-        if (field === 'fit') {
-            fields.append(buildFitField(settings.sizes[sizeSet].fit, (fit) => {
-                ensureSettings(context).sizes[sizeSet].fit = fit;
-                saveAndRefresh(context);
-            }));
-            continue;
-        }
-        const { wrapper, input, hint } = buildSizeInput(
-            SIZE_FIELD_LABELS[field],
-            defaultSizeValue(sizeSet, field) || '—',
-        );
-        input.value = settings.sizes[sizeSet][field];
-        input.addEventListener('change', () => {
-            const result = validateSizeValue(input.value);
-            // Stored verbatim, valid or not: an unusable value is treated as
-            // unset while rendering, and the user keeps what they typed.
-            ensureSettings(context).sizes[sizeSet][field] = input.value;
-            if (result.ok) {
-                showFieldHint(input, hint, '');
-            } else {
-                showFieldHint(input, hint, SIZE_VALUE_HINT);
-                console.info(
-                    `${LOG_PREFIX} ${sizeSet} ${field} "${input.value}" is not a size; using the default instead`,
-                );
-            }
-            saveAndRefresh(context);
-        });
-        // A value that was left invalid stays visible as such across a reload.
-        if (!validateSizeValue(input.value).ok) {
-            showFieldHint(input, hint, SIZE_VALUE_HINT);
-        }
-        fields.append(wrapper);
-    }
-
-    return group;
-}
-
-/**
- * Build the 投放方式 and size controls: the global placement and the two size
- * sets. Each sticker carries its own override entry point in the pack list.
- *
- * @param {any} context
- * @param {Element} root
- */
-function mountPlacementSection(context, root) {
-    const settings = ensureSettings(context);
-    const select = root.querySelector('#st_emote_placement');
-    for (const placement of PLACEMENTS) {
-        select.append(option(placement, PLACEMENT_LABELS[placement]));
-    }
-    select.value = settings.placement;
-    select.addEventListener('change', () => {
-        ensureSettings(context).placement = select.value;
-        saveAndRefresh(context);
-    });
-
-    const sizes = root.querySelector('#st_emote_sizes');
-    for (const sizeSet of SIZE_SETS) {
-        sizes.append(buildSizeSet(context, sizeSet, settings));
-    }
-}
-
-/**
- * The per-sticker 投放方式 override. An empty value means the sticker follows
- * the global setting; anything else also switches it to the other size set.
- *
- * @param {any} context
- * @param {import('./settings.js').StickerRecord} sticker
- * @returns {Element}
- */
-function buildStickerPlacementSelect(context, sticker) {
-    const select = document.createElement('select');
-    select.className = 'text_pole st-emote-sticker-placement';
-    select.title = 'Placement override for this sticker';
-    select.append(option('', PLACEMENT_FOLLOW_LABEL));
-    for (const placement of PLACEMENTS) {
-        select.append(option(placement, PLACEMENT_LABELS[placement]));
-    }
-    select.value = sticker.placement ?? '';
-    select.addEventListener('change', () => {
-        sticker.placement = select.value;
-        saveAndRefresh(context);
-    });
-    return select;
-}
-
-/**
- * @param {string} text
- * @returns {Promise<void>}
- */
-async function copyText(text) {
-    if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        return;
-    }
-    const area = document.createElement('textarea');
-    area.value = text;
-    document.body.append(area);
-    area.select();
-    document.execCommand('copy');
-    area.remove();
-}
 
 /**
  * A small labelled button, the shape almost every action in a pack row uses.
@@ -1141,7 +849,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         context.saveSettingsDebounced();
     });
     row.append(descriptionInput);
-    row.append(buildStickerPlacementSelect(context, sticker));
+    row.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
 
     const replace = filePickerButton(
         'Replace',
@@ -1489,7 +1197,13 @@ async function handleImport(context, file, refresh) {
     }
 
     const current = ensureSettings(context);
-    const plan = planImport(archive.manifest, current.packs, newId);
+    // The extracted bytes' real lengths, so `planImport` can hold an imported
+    // image to the same 5MB ceiling a picked file faces. A manifest's own claim
+    // about its size would be a number the other side wrote.
+    const imageSizes = new Map(
+        [...archive.images].map(([path, bytes]) => [path, bytes.byteLength]),
+    );
+    const plan = planImport(archive.manifest, current.packs, newId, imageSizes);
     if (!plan.ok) {
         toast('warning', importFailureMessage(plan.reason));
         return;

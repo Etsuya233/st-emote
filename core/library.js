@@ -42,21 +42,21 @@ export function sortPacks(packs) {
 /**
  * The cover image of a pack: the thumbnail of its **first** sticker, which is
  * the first sticker as stored — the same order the panel lists them in, so the
- * cover always matches what the user sees at the top of the pack. The first
- * sticker that actually has a picture is used, so one sticker still waiting for
- * an upload does not leave the whole pack without a cover.
+ * cover always matches what the user sees at the top of the pack.
+ *
+ * Literally the first one, as the spec words it. A first sticker still waiting
+ * for its upload therefore leaves the pack with no cover rather than borrowing a
+ * later sticker's picture: the cover is a promise about what the pack *is*, and
+ * silently substituting another entry would break that. The panel draws the
+ * absence itself (a dashed outline), and the pack's own state badge says why.
  *
  * @param {{stickers?: object[]}} pack
- * @returns {string} The image reference, or '' when the pack has none.
+ * @returns {string} The image reference, or '' when the pack has no stickers or
+ *   its first sticker has no image.
  */
 export function packCoverImage(pack) {
-    for (const sticker of Array.isArray(pack?.stickers) ? pack.stickers : []) {
-        const image = String(sticker?.image ?? '');
-        if (image !== '') {
-            return image;
-        }
-    }
-    return '';
+    const first = (Array.isArray(pack?.stickers) ? pack.stickers : [])[0];
+    return String(first?.image ?? '');
 }
 
 /**
@@ -103,22 +103,13 @@ export function packState(pack, imageExists) {
 }
 
 /**
- * Fold a string for searching: lower case, with every run of whitespace turned
- * into a single space and trimmed, so a search for `big  smile` finds
- * `Big Smile`. The same folding the label comparison already uses, which is why
- * it is spelled the same way.
- *
- * @param {unknown} text
- * @returns {string}
- */
-export function searchText(text) {
-    return normalizeLabel(text);
-}
-
-/**
  * Whether one sticker matches a search query, by label **or** by description —
  * the description is the longer text, so it is what makes two similar-looking
  * stickers tellable apart, and searching only the label would waste it.
+ *
+ * The comparison folds the same way label comparison already does (trim, collapse
+ * inner whitespace, case-insensitive), so a search for `big  smile` finds
+ * `Big Smile` exactly as a token written that way would.
  *
  * An empty query matches everything, so the panel can hand the result straight
  * to its renderer without special-casing "no search yet".
@@ -128,12 +119,12 @@ export function searchText(text) {
  * @returns {boolean}
  */
 export function matchesQuery(sticker, query) {
-    const needle = searchText(query);
+    const needle = normalizeLabel(query);
     if (needle === '') {
         return true;
     }
-    return searchText(sticker?.label).includes(needle)
-        || searchText(sticker?.description).includes(needle);
+    return normalizeLabel(sticker?.label).includes(needle)
+        || normalizeLabel(sticker?.description).includes(needle);
 }
 
 /**
@@ -161,7 +152,7 @@ export function matchesQuery(sticker, query) {
  */
 export function searchLibrary(packs, query) {
     const list = Array.isArray(packs) ? packs : [];
-    const searching = searchText(query) !== '';
+    const searching = normalizeLabel(query) !== '';
     const entries = [];
     for (const pack of list) {
         const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];

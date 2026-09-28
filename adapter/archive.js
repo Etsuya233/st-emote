@@ -1,21 +1,21 @@
 /**
  * 把一个表情包打包成一个 zip，以及把别人给的 zip 读回来。
  *
- * The archive format itself — what the manifest says, which files may be named,
- * whether a pack may be imported at all — is `core/manifest.js`. What is left
- * here is the part that genuinely needs the browser: turning a pack into zip
- * bytes, reading a zip back, and fetching the image files the manifest points
- * at.
+ * The archive format itself — what the 包清单 says, which files may be named,
+ * whether a pack may be imported at all, and what each refusal is called — is
+ * `core/manifest.js`. What is left here is the part that genuinely needs the
+ * browser: turning a pack into zip bytes, reading a zip back, and fetching the
+ * image files the 包清单 points at.
  *
  * JSZip is the copy SillyTavern already ships at `/lib/jszip.min.js`, loaded
  * the same way the client loads it: a lazy dynamic import that installs the
  * global. That is deliberate — this extension adds no dependency of its own, and
  * a runtime npm install would be a new way for it to break on someone else's
- * setup.
+ * setup. (The *tests* use the `jszip` devDependency, so the archive guarantee
+ * is exercised on a machine with no SillyTavern checkout at all.)
  */
 
-import { localImageOf } from '../core/catalogue.js';
-import { MANIFEST_FILE, buildManifest, parseManifest } from '../core/manifest.js';
+import { MANIFEST_FILE, parseManifest, planPackExport } from '../core/manifest.js';
 
 /** Where the client keeps the zip library. */
 const JSZIP_URL = '/lib/jszip.min.js';
@@ -40,12 +40,9 @@ export async function loadJsZip() {
  *
  * Images are fetched through the same origin the extension is served from, so
  * the stored path is all that is needed to get the bytes back — no extra
- * bookkeeping, and a missing file surfaces as a rejected export rather than as
- * a zip with a hole in it.
- *
- * A 外链 has no bytes to put in the archive: the manifest records the address and
- * the import on the other side will use it directly, so a shared link keeps
- * working rather than being frozen into a copy of today's picture.
+ * bookkeeping, and a missing file surfaces as a rejected export rather than as a
+ * zip with a hole in it. Which file goes with which sticker comes from the
+ * core's export plan, so the two can never fall out of step here.
  *
  * @param {{name: string, stickers: object[]}} pack
  * @returns {Promise<{blob: Blob, fileName: string, count: number}>}
@@ -53,19 +50,13 @@ export async function loadJsZip() {
 export async function buildPackArchive(pack) {
     const JSZip = await loadJsZip();
     const zip = new JSZip();
-    const manifest = buildManifest(pack);
+    const { manifest, images } = planPackExport(pack);
 
-    let count = 0;
-    for (const [index, entry] of manifest.stickers.entries()) {
-        if (!entry.file) {
-            continue;
-        }
-        const bytes = await fetchImageBytes(localImageOf(pack.stickers[index]));
-        zip.file(entry.file, bytes);
-        count += 1;
+    for (const { path, image } of images) {
+        zip.file(path, await fetchImageBytes(image));
     }
 
-    // Written last so the manifest is the last thing to land in the archive, and
+    // Written last so the 包清单 is the last thing to land in the archive, and
     // pretty-printed because a user opening the zip is the other reader of it.
     zip.file(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
 
@@ -75,17 +66,19 @@ export async function buildPackArchive(pack) {
         // squeezing it again costs time and saves nothing.
         compression: 'STORE',
     });
-    return { blob, fileName: `${manifest.name || 'pack'}.zip`, count };
+    return { blob, fileName: `${manifest.name || 'pack'}.zip`, count: images.length };
 }
 
 /**
  * Read a pack archive.
  *
- * The manifest is validated before anything is pulled out of the archive, and
- * the image files are only read for entries a validated manifest asked for. A
- * zip is a container someone else built: its file names, its entry count and its
+ * The 包清单 is validated before anything is pulled out of the archive, and the
+ * image files are only read for entries a validated manifest asked for. A zip is
+ * a container someone else built: its file names, its entry count and its
  * contents are all untrusted, so the manifest is the only thing that decides
- * what gets read.
+ * what gets read. The byte length of each image is reported alongside it, so
+ * the caller can hold the extracted files to the same size limit the upload
+ * path enforces — see `planImport`.
  *
  * @param {Blob|File} file
  * @returns {Promise<{ok: true, manifest: object, images: Map<string, Uint8Array>}

@@ -35,15 +35,24 @@ export function localImageOf(sticker) {
  * touched, so replacing the picture of a mis-picked file never costs the label
  * the model already uses.
  *
+ * The previous file comes back so the caller can delete it — **except when it is
+ * the file that was just written**. SillyTavern's upload endpoint strips the
+ * extension off the requested name and re-appends the format's, so replacing a
+ * png with another png lands on the same path, and deleting "the old file" would
+ * delete the new image and leave the sticker pointing at nothing. The guard is
+ * here rather than at the call site because "never delete the image you just
+ * stored" is a rule about the pair of operations, and it is the one place both
+ * halves are visible.
+ *
  * @param {{image?: string}} sticker
  * @param {string} nextImage
- * @returns {string} The previous local file, so the caller can delete it. Empty
- *   when there was nothing to delete (a new sticker, or a 外链).
+ * @returns {string} The previous local file, safe to delete. Empty when there
+ *   was nothing to delete: a new sticker, a 外链, or the same file.
  */
 export function replaceStickerImage(sticker, nextImage) {
     const previous = localImageOf(sticker);
     sticker.image = String(nextImage ?? '');
-    return previous;
+    return previous === sticker.image ? '' : previous;
 }
 
 /**

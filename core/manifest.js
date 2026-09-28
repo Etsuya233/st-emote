@@ -19,7 +19,13 @@ import {
     validateLabel,
     validatePackName,
 } from './constraints.js';
-import { validateExternalImageUrl, imageFormatOf, isExternalImageUrl } from './image-rules.js';
+import {
+    MAX_IMAGE_BYTES,
+    MAX_IMAGE_LABEL,
+    imageFormatOf,
+    isExternalImageUrl,
+    validateExternalImageUrl,
+} from './image-rules.js';
 import { validatePlacement } from './placement.js';
 
 /** Marker identifying our own archive, so a foreign zip is refused by name. */
@@ -56,37 +62,73 @@ export function archiveImagePath(sticker, index) {
 }
 
 /**
- * Build the manifest for one pack. Every sticker is described, whether or not
- * it has an image yet: a sticker with no label and no picture still carries
- * itself across, so an unfinished pack survives a round trip intact.
+ * @typedef {{path: string, image: string, sticker: object}} ExportImage
+ */
+
+/**
+ * @typedef {{manifest: object, images: ExportImage[]}} ExportPlan
+ */
+
+/**
+ * Work out what one pack's archive will contain: the 包清单, and for each entry
+ * in it, which file on this machine holds the bytes.
+ *
+ * The two are produced in **one pass**, and the image list carries its own
+ * sticker rather than an index. A caller that paired the two lists by position
+ * would be one skipped sticker away from writing the wrong picture under the
+ * wrong label — and a 外链 is exactly such a skip, since it has no file.
  *
  * @param {{name: string, stickers: object[]}} pack
- * @returns {{format: string, version: number, name: string, stickers: object[]}}
+ * @returns {ExportPlan}
  */
-export function buildManifest(pack) {
-    const stickers = (Array.isArray(pack?.stickers) ? pack.stickers : []).map((sticker, index) => {
+export function planPackExport(pack) {
+    const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
+    const entries = [];
+    const images = [];
+
+    stickers.forEach((sticker, index) => {
         const entry = {
             label: String(sticker?.label ?? ''),
             description: String(sticker?.description ?? ''),
         };
         const image = String(sticker?.image ?? '');
         if (isExternalImageUrl(image)) {
+            // A 外链 has no bytes to put in the archive: the address is what
+            // travels, so a shared link keeps working instead of being frozen
+            // into a copy of today's picture.
             entry.url = image;
         } else if (image !== '') {
-            entry.file = archiveImagePath(sticker, index);
+            const path = archiveImagePath(sticker, index);
+            entry.file = path;
+            images.push({ path, image, sticker });
         }
         if (validatePlacement(sticker?.placement).value) {
             entry.placement = sticker.placement;
         }
-        return entry;
+        entries.push(entry);
     });
 
     return {
-        format: MANIFEST_FORMAT,
-        version: MANIFEST_VERSION,
-        name: String(pack?.name ?? ''),
-        stickers,
+        manifest: {
+            format: MANIFEST_FORMAT,
+            version: MANIFEST_VERSION,
+            name: String(pack?.name ?? ''),
+            stickers: entries,
+        },
+        images,
     };
+}
+
+/**
+ * Build the 包清单 for one pack. Every sticker is described, whether or not it
+ * has an image yet: a sticker with no label and no picture still carries itself
+ * across, so an unfinished pack survives a round trip intact.
+ *
+ * @param {{name: string, stickers: object[]}} pack
+ * @returns {{format: string, version: number, name: string, stickers: object[]}}
+ */
+export function buildManifest(pack) {
+    return planPackExport(pack).manifest;
 }
 
 /**
@@ -226,8 +268,42 @@ export function isSafeArchivePath(file) {
 
 /**
  * @typedef {{ok: true, pack: object, uploads: {sticker: object, path: string, format: string}[]}
- *   | {ok: false, reason: 'name-taken'}} ImportPlan
+ *   | {ok: false, reason: string}} ImportPlan
  */
+
+/**
+ * Every way an import can be refused, in the panel's words.
+ *
+ * They live beside the rules that produce them rather than in the adapter, for
+ * the reason every other rule here does: a reason and the sentence that explains
+ * it are one fact, and keeping them apart is what makes a new reason get added
+ * to one file and not the other.
+ *
+ * @param {string} reason
+ * @returns {string}
+ */
+export function importFailureMessage(reason) {
+    switch (reason) {
+        case 'not-a-zip':
+            return 'that file is not a readable zip archive';
+        case 'no-manifest':
+            return `that zip has no ${MANIFEST_FILE} in it, so it is not a st-emote pack`;
+        case 'not-a-pack':
+            return 'that zip was not made by st-emote';
+        case 'unsupported-version':
+            return 'that pack was made by a newer version of st-emote';
+        case 'name-taken':
+            return 'a pack with that name already exists; rename or delete it first';
+        case 'missing-image':
+            return 'that pack is incomplete: one of its image files is missing from the zip';
+        case 'unsupported-format':
+            return 'that pack holds an image that is not a png, jpg, webp or gif';
+        case 'image-too-large':
+            return `that pack holds an image larger than ${MAX_IMAGE_LABEL}`;
+        default:
+            return `that pack could not be read (${reason})`;
+    }
+}
 
 /**
  * Turn a parsed manifest into a pack ready to be added to the catalogue, and
@@ -236,6 +312,16 @@ export function isSafeArchivePath(file) {
  * A name collision is refused outright. Renaming on import would mean inventing
  * a qualifier the model then has to be told about, and overwriting would throw
  * away a pack the user already has; both are worse than saying no.
+ *
+ * **Every image in the archive goes through the same rules a picked file does.**
+ * An import is a way for an arbitrary zip to put bytes into the image
+ * directory, and an archive that skipped the format and size limits would be a
+ * hole straight past the rules the upload path enforces. So the format is
+ * checked against the accepted four, and the size against the ceiling, here —
+ * and either failure refuses the **whole** pack. That is deliberate and it is
+ * the same rule the rest of this module follows: a half-imported pack is a pack
+ * the user did not choose and cannot easily undo, so nothing partial is ever
+ * better than a refusal with a stated reason.
  *
  * The new pack's stickers start with an empty `image`: the caller fills it in
  * from `uploads` once the bytes are stored, and a sticker with nothing to
@@ -246,9 +332,13 @@ export function isSafeArchivePath(file) {
  * @param {object[]} packs - The current catalogue, for the name check.
  * @param {(prefix: string) => string} newId - Id factory, so the core does not
  *   depend on the adapter's generator.
+ * @param {ReadonlyMap<string, number>} [imageSizes] - Byte length of each
+ *   archive file, read out of the zip by the caller. A file the caller could not
+ *   read is a missing one, and a file with no recorded size is **not** trusted
+ *   to be within the limit.
  * @returns {ImportPlan}
  */
-export function planImport(manifest, packs, newId) {
+export function planImport(manifest, packs, newId, imageSizes = new Map()) {
     const name = String(manifest?.name ?? '').trim();
     if (findPackByName(packs, name)) {
         return { ok: false, reason: 'name-taken' };
@@ -256,6 +346,31 @@ export function planImport(manifest, packs, newId) {
 
     /** @type {{sticker: object, path: string, format: string}[]} */
     const uploads = [];
+    for (const entry of Array.isArray(manifest?.stickers) ? manifest.stickers : []) {
+        if (!entry.file) {
+            continue;
+        }
+        // The format comes from the file name inside the archive, which is the
+        // only place it is recorded. An unrecognised one is refused outright:
+        // silently dropping the upload would leave a sticker with no image and
+        // no explanation, which is the one outcome the whole design rules out.
+        const format = imageFormatOf(entry.file);
+        if (!format) {
+            return { ok: false, reason: 'unsupported-format' };
+        }
+        const bytes = imageSizes.get(entry.file);
+        if (bytes === undefined) {
+            return { ok: false, reason: 'missing-image' };
+        }
+        if (bytes > MAX_IMAGE_BYTES) {
+            return { ok: false, reason: 'image-too-large' };
+        }
+        uploads.push({ sticker: null, path: entry.file, format });
+    }
+
+    // The stickers are built only once every image has passed, so a refusal
+    // above cannot leave half a pack behind for the caller to clean up.
+    let cursor = 0;
     const stickers = (Array.isArray(manifest?.stickers) ? manifest.stickers : []).map((entry) => {
         const sticker = {
             id: newId('sticker'),
@@ -265,13 +380,8 @@ export function planImport(manifest, packs, newId) {
             placement: entry.placement ?? '',
         };
         if (entry.file) {
-            // The format comes from the file name inside the archive, which is
-            // the only place it is recorded; the sticker gets the path the
-            // upload endpoint returns later.
-            const format = imageFormatOf(entry.file);
-            if (format) {
-                uploads.push({ sticker, path: entry.file, format });
-            }
+            uploads[cursor].sticker = sticker;
+            cursor += 1;
         }
         return sticker;
     });
