@@ -1,0 +1,99 @@
+/*
+ * One class name for both render paths: the official-hook path writes
+ * `class="st-emote"` and SillyTavern adds the `custom-` prefix; the DOM path
+ * writes `custom-st-emote` directly. Styles are maintained only here.
+ */
+.custom-st-emote {
+    max-width: 100%;
+    max-height: 3em;
+    vertical-align: middle;
+    object-fit: contain;
+}
+
+.st-emote-hint {
+    opacity: 0.7;
+    font-size: 0.9em;
+    margin-bottom: 8px;
+}
+
+.st-emote-create {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.st-emote-create .text_pole {
+    flex: 1;
+}
+
+.st-emote-pack {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+
+.st-emote-pack-header {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.st-emote-pack-name {
+    flex: 1;
+}
+
+.st-emote-pack-count {
+    opacity: 0.7;
+    font-size: 0.85em;
+}
+
+.st-emote-enable {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.st-emote-stickers {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.st-emote-sticker {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.st-emote-thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.2);
+    flex-shrink: 0;
+}
+
+.st-emote-thumb-missing {
+    border: 1px dashed var(--SmartThemeBorderColor);
+}
+
+.st-emote-label {
+    flex: 1;
+    min-width: 0;
+}
+
+.st-emote-description {
+    flex: 2;
+    min-width: 0;
+}
+
+.st-emote-empty {
+    opacity: 0.7;
+    font-size: 0.9em;
+}

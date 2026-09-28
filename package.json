@@ -1,0 +1,10 @@
+{
+    "name": "st-emote",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "SillyTavern extension that renders model-emitted sticker tokens as images.",
+    "scripts": {
+        "test": "node --test"
+    }
+}
