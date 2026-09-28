@@ -1,5 +1,7 @@
 import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
 import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
+import { DEFAULT_PLACEMENT, validatePlacement } from '../core/placement.js';
+import { ensureSizeSets } from '../core/size.js';
 
 /** Key under `extension_settings` that holds this extension's data. */
 export const STORAGE_KEY = 'st-emote';
@@ -15,6 +17,8 @@ const SCHEMA_VERSION = 1;
  * @property {string} label
  * @property {string} description
  * @property {string} image - Client-relative path, e.g. `user/images/st-emote/x.png`.
+ * @property {string} [placement] - This sticker's 投放方式 override. Empty
+ *   means "follow the global setting".
  */
 
 /**
@@ -30,6 +34,9 @@ const SCHEMA_VERSION = 1;
  * @property {string[]} enabledPackNames - Global scope.
  * @property {string} stickerTag - Name of the HTML-tag token form.
  * @property {boolean} renderUserMessages - Render tokens in user messages too.
+ * @property {import('../core/placement.js').Placement} placement - Global 投放方式.
+ * @property {import('../core/size.js').SizeSets} sizes - The `inline` and
+ *   `block` size sets.
  */
 
 /**
@@ -47,6 +54,8 @@ export function ensureSettings(context) {
             enabledPackNames: [],
             stickerTag: DEFAULT_STICKER_TAG,
             renderUserMessages: false,
+            placement: DEFAULT_PLACEMENT,
+            sizes: ensureSizeSets(null),
         };
     }
     const settings = store[STORAGE_KEY];
@@ -60,12 +69,24 @@ export function ensureSettings(context) {
         settings.stickerTag = DEFAULT_STICKER_TAG;
     }
     settings.renderUserMessages = settings.renderUserMessages === true;
+    if (!validatePlacement(settings.placement).ok) {
+        settings.placement = DEFAULT_PLACEMENT;
+    }
+    // Size values are stored exactly as typed, valid or not. An invalid value is
+    // treated as unset while rendering, and the panel still shows it so the user
+    // can fix it instead of losing what they wrote.
+    settings.sizes = ensureSizeSets(settings.sizes);
     for (const pack of settings.packs) {
         if (!pack || typeof pack !== 'object') {
             continue;
         }
         if (!Array.isArray(pack.stickers)) {
             pack.stickers = [];
+        }
+        for (const sticker of pack.stickers) {
+            if (sticker && !validatePlacement(sticker.placement).ok) {
+                sticker.placement = '';
+            }
         }
     }
     return settings;
@@ -117,7 +138,7 @@ export function setPackEnabled(settings, name, enabled) {
  * @returns {StickerRecord}
  */
 export function createSticker() {
-    return { id: newId('sticker'), label: '', description: '', image: '' };
+    return { id: newId('sticker'), label: '', description: '', image: '', placement: '' };
 }
 
 /**

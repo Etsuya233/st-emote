@@ -2,12 +2,25 @@
  * One class name for both render paths: the official-hook path writes
  * `class="st-emote"` and SillyTavern adds the `custom-` prefix; the DOM path
  * writes `custom-st-emote` directly. Styles are maintained only here.
+ *
+ * Only the presentation that no setting can change lives here. The size bounds
+ * and the fill mode arrive as an inline `style` on the image, evaluated from the
+ * `inline` / `block` size set that matches the sticker's 投放方式, so the
+ * `max-height: 3em` that suits text-sized images never leaks onto a block image.
  */
 .custom-st-emote {
     max-width: 100%;
-    max-height: 3em;
     vertical-align: middle;
     object-fit: contain;
+}
+
+/*
+ * A sticker that is not rendered in place. One image per block, so several in
+ * the same message stack vertically instead of sitting side by side.
+ */
+.custom-st-emote-block {
+    display: block;
+    margin: 4px 0;
 }
 
 .st-emote-hint {
@@ -42,6 +55,67 @@
 
 .st-emote-option .text_pole {
     width: 10em;
+}
+
+.st-emote-placement,
+.st-emote-sizes {
+    margin-bottom: 8px;
+}
+
+.st-emote-field {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.st-emote-field > span:first-child {
+    opacity: 0.8;
+    font-size: 0.9em;
+    min-width: 6em;
+}
+
+.st-emote-size {
+    width: 6em;
+}
+
+.st-emote-field-hint {
+    font-size: 0.8em;
+    opacity: 0.85;
+}
+
+.st-emote-hint-bad {
+    color: var(--SmartThemeQuoteColor, #c0392b);
+    opacity: 1;
+}
+
+.st-emote-input-bad {
+    outline: 1px solid var(--SmartThemeQuoteColor, #c0392b);
+}
+
+.st-emote-size-set {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+}
+
+.st-emote-size-set-title {
+    font-weight: bold;
+    font-size: 0.9em;
+    margin-bottom: 4px;
+}
+
+.st-emote-size-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.st-emote-sticker-placement {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.85em;
 }
 
 .st-emote-pack {

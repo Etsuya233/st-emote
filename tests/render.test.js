@@ -96,7 +96,7 @@ test('tokens inside a pre block are untouched', () => {
 test('tokens after a code block are still rendered', () => {
     const source = '<code>[[sticker:daily:happy]]</code> [[sticker:daily:happy]]';
     const { html } = renderHtml(source, setWith(['daily']));
-    assert.equal(html, `<code>[[sticker:daily:happy]]</code> <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy" data-st-emote-pack="daily" data-st-emote-label="happy">`);
+    assert.equal(html, `<code>[[sticker:daily:happy]]</code> <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy" style="max-height: 3em; object-fit: contain" data-st-emote-pack="daily" data-st-emote-label="happy" data-st-emote-placement="in-place">`);
 });
 
 test('attribute values are escaped', () => {
@@ -207,4 +207,39 @@ test('renders tokens in realistic showdown output', () => {
     assert.equal(misses.length, 0);
     assert.equal(html.match(/<img /g).length, 3);
     assert.match(html, /<pre><code>\[\[sticker:daily:happy\]\]<\/code><\/pre>/);
+});
+
+test('after-block moves every image out of its own block in realistic showdown output', () => {
+    const source = '<p>She grins.<br>[[sticker:daily:happy]]</p>\n'
+        + '<blockquote><p>Quote &amp; [[sticker:daily:happy]]</p></blockquote>\n'
+        + '<ul><li>Item [[sticker:daily:happy]]</li></ul>\n'
+        + '<pre><code>[[sticker:daily:happy]]</code></pre>';
+    const { html, misses } = renderHtml(source, setWith(['daily']), { placement: 'after-block' });
+    assert.equal(misses.length, 0);
+    // One per rendered token; the one inside the code block is still text.
+    assert.equal(html.match(/<img /g).length, 3);
+    assert.match(html, /^<p>She grins\.<br><\/p><img [^>]*>\n/);
+    assert.match(html, /<blockquote><p>Quote &amp; <\/p><img [^>]*><\/blockquote>/);
+    assert.match(html, /<ul><li>Item <\/li><img [^>]*><\/ul>/);
+    assert.match(html, /<pre><code>\[\[sticker:daily:happy\]\]<\/code><\/pre>$/);
+});
+
+test('an in-place sticker next to an after-block one lands in the same message', () => {
+    const packs = [
+        {
+            name: 'daily',
+            stickers: [
+                { label: 'inline one', image: 'user/images/st-emote/a.png' },
+                { label: 'block one', image: 'user/images/st-emote/b.png', placement: 'after-block' },
+            ],
+        },
+    ];
+    const set = buildEffectiveSet(packs, ['daily']);
+    const { html } = renderHtml(
+        '<p>first [[sticker:daily:inline one]] then [[sticker:daily:block one]]</p>\n<p>next</p>',
+        set,
+    );
+    assert.equal(html.match(/<img /g).length, 2);
+    assert.match(html, /^<p>first <img [^>]*data-st-emote-placement="in-place"> then <\/p>/);
+    assert.match(html, /<\/p><img [^>]*data-st-emote-placement="after-block" data-st-emote-placed="1">\n<p>next<\/p>$/);
 });

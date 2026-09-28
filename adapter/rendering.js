@@ -1,5 +1,11 @@
-import { validateStickerTag } from '../core/constraints.js';
+import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
 import { buildScopedEffectiveSet } from '../core/effective-set.js';
+import {
+    BLOCK_CONTAINER_SELECTOR,
+    PLACED_ATTRIBUTE,
+    blockBoundaryMode,
+    isBlockPlacement,
+} from '../core/placement.js';
 import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
 import { parseTokenBody, tokenPrefixes } from '../core/token.js';
 import { ensureSettings } from './settings.js';
@@ -56,6 +62,30 @@ function logMisses(misses) {
     for (const miss of misses) {
         console.info(describeMiss(miss));
     }
+}
+
+/**
+ * @param {import('../core/size.js').InvalidSize[]} invalidSizes
+ */
+function logInvalidSizes(invalidSizes) {
+    for (const entry of invalidSizes) {
+        console.info(`${LOG_PREFIX} size value ignored, treated as unset: ${entry.field} = "${entry.value}"`);
+    }
+}
+
+/**
+ * The placement and size configuration, as plain data for the pure core.
+ *
+ * @param {any} context
+ * @returns {import('../core/render.js').RenderOptions}
+ */
+function renderOptions(context) {
+    const settings = ensureSettings(context);
+    return {
+        tagName: settings.stickerTag,
+        placement: settings.placement,
+        sizes: settings.sizes,
+    };
 }
 
 /**
@@ -131,12 +161,13 @@ function isSkippedMessage(context, messageElement) {
  *
  * @param {Element} textElement
  * @param {import('../core/effective-set.js').EffectiveSet} effectiveSet
- * @param {string} tagName
+ * @param {import('../core/render.js').RenderOptions} options
  * @returns {number}
  */
-function renderStickerElements(textElement, effectiveSet, tagName) {
-    const elements = textElement.querySelectorAll(tagName);
+function renderStickerElements(textElement, effectiveSet, options) {
+    const elements = textElement.querySelectorAll(options.tagName ?? DEFAULT_STICKER_TAG);
     const misses = [];
+    const invalidSizes = [];
     let rewritten = 0;
 
     for (const element of elements) {
@@ -151,6 +182,8 @@ function renderStickerElements(textElement, effectiveSet, tagName) {
             { raw: element.outerHTML, packName: parsed.packName, label: parsed.label },
             effectiveSet,
             misses,
+            options,
+            invalidSizes,
         );
         if (!html) {
             element.remove();
@@ -161,6 +194,7 @@ function renderStickerElements(textElement, effectiveSet, tagName) {
     }
 
     logMisses(misses);
+    logInvalidSizes(invalidSizes);
     return rewritten;
 }
 
@@ -169,11 +203,11 @@ function renderStickerElements(textElement, effectiveSet, tagName) {
  *
  * @param {Element} textElement
  * @param {import('../core/effective-set.js').EffectiveSet} effectiveSet
- * @param {string} tagName
+ * @param {import('../core/render.js').RenderOptions} options
  * @returns {number}
  */
-function renderTextNodes(textElement, effectiveSet, tagName) {
-    const hints = tokenPrefixes(tagName).map((prefix) => prefix.toLowerCase());
+function renderTextNodes(textElement, effectiveSet, options) {
+    const hints = tokenPrefixes(options.tagName ?? DEFAULT_STICKER_TAG).map((prefix) => prefix.toLowerCase());
     const walker = document.createTreeWalker(textElement, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
             const lower = (node.data ?? '').toLowerCase();
@@ -199,8 +233,9 @@ function renderTextNodes(textElement, effectiveSet, tagName) {
 
     let rewritten = 0;
     for (const node of nodes) {
-        const { html, misses } = renderText(node.data, effectiveSet, { tagName });
+        const { html, misses, invalidSizes } = renderText(node.data, effectiveSet, options);
         logMisses(misses);
+        logInvalidSizes(invalidSizes);
         if (html === node.data) {
             continue;
         }
@@ -211,8 +246,87 @@ function renderTextNodes(textElement, effectiveSet, tagName) {
 }
 
 /**
+ * The closest block container the image was written inside. `textElement` is
+ * the message itself rather than one of its blocks, so it is never a candidate.
+ * Which elements count as blocks is the pure core's list.
+ *
+ * @param {Element} image
+ * @param {Element} root
+ * @returns {Element|null}
+ */
+function nearestBlockAncestorElement(image, root) {
+    let node = image.parentElement;
+    while (node && node !== root) {
+        if (node.matches(BLOCK_CONTAINER_SELECTOR)) {
+            return node;
+        }
+        node = node.parentElement;
+    }
+    return null;
+}
+
+/**
+ * Move the stickers that are not rendered in place to where their 投放方式 says
+ * they belong: `after-block` just past the block the token was written in,
+ * `message-end` at the end of the message.
+ *
+ * The boundary rule itself is the pure core's (`blockBoundaryMode` over the
+ * block container set); this only performs the DOM move. Targets are resolved
+ * before anything moves, so relocating one image never changes where another
+ * one lands, and each target keeps a running anchor so images bound for the
+ * same place stay in the order they were written.
+ *
+ * Idempotent: a moved image is marked with `PLACED_ATTRIBUTE` and skipped from
+ * then on, which is what keeps re-render, Show more and swipe passes — and the
+ * official-hook path, which relocates in the string — from dragging an image
+ * that is already home to the end of the message.
+ *
+ * @param {Element} textElement
+ * @returns {number} Number of images that were not rendered in place.
+ */
+function relocateStickerImages(textElement) {
+    const images = Array.from(
+        textElement.querySelectorAll(`img.${STICKER_CLASS}[data-st-emote-placement]:not([${PLACED_ATTRIBUTE}])`),
+    ).filter((image) => isBlockPlacement(image.getAttribute('data-st-emote-placement')));
+    if (images.length === 0) {
+        return 0;
+    }
+
+    const targets = images.map((image) => {
+        const container = nearestBlockAncestorElement(image, textElement);
+        return { image, container, mode: blockBoundaryMode(container?.tagName ?? null) };
+    });
+
+    const anchors = new Map();
+    for (const { image, container, mode } of targets) {
+        if (container === null || mode === 'message-end') {
+            textElement.append(image);
+            image.setAttribute(PLACED_ATTRIBUTE, '1');
+            continue;
+        }
+        const previous = anchors.get(container);
+        if (mode === 'inside') {
+            // A table cell: the image joins the end of the cell's own content.
+            if (previous && previous.parentElement === container) {
+                previous.after(image);
+            } else {
+                container.append(image);
+            }
+        } else if (previous && previous.parentElement === container.parentElement) {
+            previous.after(image);
+        } else {
+            container.after(image);
+        }
+        anchors.set(container, image);
+        image.setAttribute(PLACED_ATTRIBUTE, '1');
+    }
+    return targets.length;
+}
+
+/**
  * Replace tokens inside one rendered message. Idempotent: once a token is
- * replaced the markup is gone, so re-running touches nothing.
+ * replaced the markup is gone, and a relocated image is marked, so re-running
+ * touches nothing.
  *
  * @param {any} context
  * @param {Element} messageElement
@@ -229,9 +343,12 @@ export function renderMessageElement(context, messageElement) {
     }
 
     const effectiveSet = effectiveSetForMessage(context, messageElement);
-    const tagName = ensureSettings(context).stickerTag;
-    let rewritten = renderStickerElements(textElement, effectiveSet, tagName);
-    rewritten += renderTextNodes(textElement, effectiveSet, tagName);
+    const options = renderOptions(context);
+    let rewritten = renderStickerElements(textElement, effectiveSet, options);
+    rewritten += renderTextNodes(textElement, effectiveSet, options);
+    // Placement is applied once, after every token in the message is an image:
+    // moving one image must not change where another one lands.
+    relocateStickerImages(textElement);
     return rewritten;
 }
 

@@ -8,6 +8,14 @@ import {
 } from '../core/constraints.js';
 import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
 import { normalizeLabel } from '../core/normalize.js';
+import { PLACEMENTS } from '../core/placement.js';
+import {
+    FIT_MODES,
+    SIZE_CONTEXTS,
+    defaultSizeValue,
+    validateFitMode,
+    validateSizeValue,
+} from '../core/size.js';
 import { allowStickerTag, LOG_PREFIX, rerenderChat } from './rendering.js';
 import { clearContextRegexJson } from './regex.js';
 import {
@@ -142,6 +150,18 @@ export function mountSettingsPanel(context) {
         'HTML tag form: <input type="text" class="text_pole" id="st_emote_tag_name">',
         '</label>',
         '</div>',
+        '<div class="st-emote-hint">',
+        'Where a sticker shows up and how big it is. Write sizes as a number with ',
+        '<code>em</code>, <code>px</code> or <code>%</code>; <code>1em</code> is the ',
+        'current chat text height. An empty field falls back to its default.',
+        '</div>',
+        '<div class="st-emote-placement">',
+        '<label class="st-emote-field">',
+        '<span>Placement</span>',
+        '<select class="text_pole" id="st_emote_placement"></select>',
+        '</label>',
+        '</div>',
+        '<div id="st_emote_sizes" class="st-emote-sizes"></div>',
         '<div class="st-emote-create">',
         '<input type="text" class="text_pole" id="st_emote_new_pack" placeholder="New pack name">',
         '<div class="menu_button" id="st_emote_create_pack">Create pack</div>',
@@ -205,6 +225,8 @@ export function mountSettingsPanel(context) {
         saveAndRefresh(context);
     });
 
+    mountPlacementSection(context, root);
+
     const nameInput = root.querySelector('#st_emote_new_pack');
     const createButton = root.querySelector('#st_emote_create_pack');
     createButton.addEventListener('click', () => {
@@ -226,6 +248,203 @@ export function mountSettingsPanel(context) {
     }
 
     refresh();
+}
+
+/**
+ * Labels for the 投放方式, including the "follow the global setting" choice a
+ * single sticker's override starts from.
+ */
+const PLACEMENT_LABELS = {
+    'in-place': 'In place',
+    'after-block': 'After the block',
+    'message-end': 'End of message',
+};
+
+const PLACEMENT_FOLLOW_LABEL = 'Follow the global setting';
+
+const SIZE_SET_TITLES = {
+    inline: 'Inline size (in place)',
+    block: 'Block size (after the block / end of message)',
+};
+
+const SIZE_FIELD_LABELS = {
+    minWidth: 'Min width',
+    minHeight: 'Min height',
+    maxWidth: 'Max width',
+    maxHeight: 'Max height',
+    fit: 'Fill',
+};
+
+const SIZE_VALUE_HINT = 'needs a number with em, px or %';
+
+/**
+ * @param {string} value
+ * @param {string} label
+ * @returns {HTMLOptionElement}
+ */
+function option(value, label) {
+    const element = document.createElement('option');
+    element.value = value;
+    element.textContent = label;
+    return element;
+}
+
+/**
+ * @param {string} hint - Empty hides the hint and clears the invalid state.
+ */
+function showFieldHint(input, hintElement, hint) {
+    hintElement.textContent = hint;
+    hintElement.classList.toggle('st-emote-hint-bad', hint !== '');
+    input.classList.toggle('st-emote-input-bad', hint !== '');
+}
+
+/**
+ * One hand-typed size field with its own hint. The typed text is stored as
+ * written even when it is invalid: an unusable value is treated as unset while
+ * rendering, and the user keeps what they typed so they can fix it.
+ *
+ * @param {string} label
+ * @param {string} placeholder
+ * @returns {{wrapper: Element, input: HTMLInputElement, hint: Element}}
+ */
+function buildSizeInput(label, placeholder) {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'st-emote-field';
+
+    const caption = document.createElement('span');
+    caption.textContent = label;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'text_pole st-emote-size';
+    input.placeholder = placeholder;
+
+    const hint = document.createElement('span');
+    hint.className = 'st-emote-field-hint';
+
+    wrapper.append(caption, input, hint);
+    return { wrapper, input, hint };
+}
+
+/**
+ * The `inline` or `block` size set: four hand-typed bounds and a fill mode.
+ *
+ * @param {any} context
+ * @param {'inline'|'block'} which
+ * @param {import('./settings.js').Settings} settings
+ * @returns {Element}
+ */
+function buildSizeSet(context, which, settings) {
+    const group = document.createElement('div');
+    group.className = 'st-emote-size-set';
+
+    const title = document.createElement('div');
+    title.className = 'st-emote-size-set-title';
+    title.textContent = SIZE_SET_TITLES[which];
+    group.append(title);
+
+    const fields = document.createElement('div');
+    fields.className = 'st-emote-size-fields';
+    group.append(fields);
+
+    for (const field of ['minWidth', 'minHeight', 'maxWidth', 'maxHeight']) {
+        const { wrapper, input, hint } = buildSizeInput(
+            SIZE_FIELD_LABELS[field],
+            defaultSizeValue(which, field) || '—',
+        );
+        input.value = settings.sizes[which][field];
+        input.addEventListener('change', () => {
+            const result = validateSizeValue(input.value);
+            // Stored verbatim, valid or not: an unusable value is treated as
+            // unset while rendering, and the user keeps what they wrote.
+            ensureSettings(context).sizes[which][field] = input.value;
+            if (result.ok) {
+                showFieldHint(input, hint, '');
+            } else {
+                showFieldHint(input, hint, SIZE_VALUE_HINT);
+                console.info(
+                    `${LOG_PREFIX} ${which} ${field} "${input.value}" is not a size; using the default instead`,
+                );
+            }
+            saveAndRefresh(context);
+        });
+        // A value that was left invalid stays visible as such across a reload.
+        if (!validateSizeValue(input.value).ok) {
+            showFieldHint(input, hint, SIZE_VALUE_HINT);
+        }
+        fields.append(wrapper);
+    }
+
+    const fitWrapper = document.createElement('label');
+    fitWrapper.className = 'st-emote-field';
+    const fitCaption = document.createElement('span');
+    fitCaption.textContent = SIZE_FIELD_LABELS.fit;
+    const fitSelect = document.createElement('select');
+    fitSelect.className = 'text_pole';
+    fitSelect.append(option('', 'default'));
+    for (const mode of FIT_MODES) {
+        fitSelect.append(option(mode, mode));
+    }
+    fitSelect.value = validateFitMode(settings.sizes[which].fit).ok
+        ? settings.sizes[which].fit
+        : '';
+    fitSelect.addEventListener('change', () => {
+        ensureSettings(context).sizes[which].fit = fitSelect.value;
+        saveAndRefresh(context);
+    });
+    fitWrapper.append(fitCaption, fitSelect);
+    fields.append(fitWrapper);
+
+    return group;
+}
+
+/**
+ * Build the 投放方式 and size controls: the global placement and the two size
+ * sets. Each sticker carries its own override entry point in the pack list.
+ *
+ * @param {any} context
+ * @param {Element} root
+ */
+function mountPlacementSection(context, root) {
+    const settings = ensureSettings(context);
+    const select = root.querySelector('#st_emote_placement');
+    for (const placement of PLACEMENTS) {
+        select.append(option(placement, PLACEMENT_LABELS[placement]));
+    }
+    select.value = settings.placement;
+    select.addEventListener('change', () => {
+        ensureSettings(context).placement = select.value;
+        saveAndRefresh(context);
+    });
+
+    const sizes = root.querySelector('#st_emote_sizes');
+    for (const which of SIZE_CONTEXTS) {
+        sizes.append(buildSizeSet(context, which, settings));
+    }
+}
+
+/**
+ * The per-sticker 投放方式 override. An empty value means the sticker follows
+ * the global setting; anything else also switches it to the other size set.
+ *
+ * @param {any} context
+ * @param {import('./settings.js').StickerRecord} sticker
+ * @returns {Element}
+ */
+function buildStickerPlacementSelect(context, sticker) {
+    const select = document.createElement('select');
+    select.className = 'text_pole st-emote-sticker-placement';
+    select.title = 'Placement override for this sticker';
+    select.append(option('', PLACEMENT_FOLLOW_LABEL));
+    for (const placement of PLACEMENTS) {
+        select.append(option(placement, PLACEMENT_LABELS[placement]));
+    }
+    select.value = sticker.placement ?? '';
+    select.addEventListener('change', () => {
+        sticker.placement = select.value;
+        saveAndRefresh(context);
+    });
+    return select;
 }
 
 /**
@@ -514,6 +733,7 @@ function buildStickerElement(context, pack, sticker, refresh) {
         context.saveSettingsDebounced();
     });
     row.append(descriptionInput);
+    row.append(buildStickerPlacementSelect(context, sticker));
 
     return row;
 }

@@ -6,6 +6,8 @@ import { normalizeLabel, normalizePackName } from './normalize.js';
  * @property {string} label
  * @property {string} [description]
  * @property {string} [image]
+ * @property {string} [placement] - This sticker's 投放方式 override; empty or
+ *   absent means it follows the global setting.
  */
 
 /**

@@ -1,4 +1,13 @@
 import { escapeAttribute, escapeText } from './escape.js';
+import {
+    BLOCK_CONTAINER_TAGS,
+    PLACED_ATTRIBUTE,
+    blockBoundaryMode,
+    isBlockPlacement,
+    resolvePlacement,
+    sizeSetForPlacement,
+} from './placement.js';
+import { evaluateSize } from './size.js';
 import { findTokens } from './token.js';
 
 /**
@@ -8,6 +17,12 @@ import { findTokens } from './token.js';
  * two paths converge on this one name and one stylesheet.
  */
 export const STICKER_CLASS = 'custom-st-emote';
+
+/**
+ * Modifier class for a sticker that owns its own block. Derived from
+ * `STICKER_CLASS`, so both render paths style block images with one rule.
+ */
+export const STICKER_BLOCK_CLASS = `${STICKER_CLASS}-block`;
 
 /**
  * @typedef {Object} Miss
@@ -21,12 +36,33 @@ export const STICKER_CLASS = 'custom-st-emote';
  * @typedef {Object} RenderResult
  * @property {string} html
  * @property {Miss[]} misses
+ * @property {import('./size.js').InvalidSize[]} invalidSizes
  */
 
 /**
  * @typedef {Object} RenderOptions
  * @property {string} [tagName] - Name of the configurable HTML-tag form.
+ * @property {import('./placement.js').Placement} [placement] - The global
+ *   投放方式; a sticker may override it.
+ * @property {import('./size.js').SizeSets} [sizes] - The `inline` and `block`
+ *   size sets.
+ * @property {string} [className] - Base class name. The DOM path writes the
+ *   final `custom-st-emote`; the official-hook path passes the un-prefixed
+ *   `st-emote` and lets SillyTavern's sanitizer add the `custom-` prefix, so
+ *   both paths converge on one name and one stylesheet.
  */
+
+/**
+ * The class list of one sticker image: the base class, plus the block modifier
+ * when the sticker is not rendered in place.
+ *
+ * @param {import('./placement.js').Placement} placement
+ * @param {string} className
+ * @returns {string}
+ */
+export function stickerClassNames(placement, className = STICKER_CLASS) {
+    return isBlockPlacement(placement) ? `${className}-block` : className;
+}
 
 function resolveToken(token, effectiveSet, misses) {
     const result = effectiveSet.lookup(token.packName, token.label);
@@ -51,11 +87,17 @@ function resolveToken(token, effectiveSet, misses) {
     return result;
 }
 
-function stickerHtml(pack, sticker) {
-    return `<img class="${STICKER_CLASS}" src="${escapeAttribute(sticker.image)}"`
+function stickerHtml(pack, sticker, options, invalidSizes) {
+    const placement = resolvePlacement(sticker.placement, options.placement);
+    const size = evaluateSize(sizeSetForPlacement(placement), options.sizes);
+    invalidSizes.push(...size.invalid);
+    return `<img class="${stickerClassNames(placement, options.className ?? STICKER_CLASS)}"`
+        + ` src="${escapeAttribute(sticker.image)}"`
         + ` alt="${escapeAttribute(sticker.label)}"`
+        + ` style="${escapeAttribute(size.style)}"`
         + ` data-st-emote-pack="${escapeAttribute(pack.name)}"`
-        + ` data-st-emote-label="${escapeAttribute(sticker.label)}">`;
+        + ` data-st-emote-label="${escapeAttribute(sticker.label)}"`
+        + ` data-st-emote-placement="${placement}">`;
 }
 
 /**
@@ -66,11 +108,15 @@ function stickerHtml(pack, sticker) {
  * @param {{raw: string, packName: string|null, label: string}} token
  * @param {import('./effective-set.js').EffectiveSet} effectiveSet
  * @param {Miss[]} misses
+ * @param {RenderOptions} [options]
+ * @param {import('./size.js').InvalidSize[]} [invalidSizes] - Collects the
+ *   hand-typed size values that were treated as unset, so the caller can log
+ *   them.
  * @returns {string}
  */
-export function renderTokenHtml(token, effectiveSet, misses) {
+export function renderTokenHtml(token, effectiveSet, misses, options = {}, invalidSizes = []) {
     const result = resolveToken(token, effectiveSet, misses);
-    return result ? stickerHtml(result.pack, result.sticker) : '';
+    return result ? stickerHtml(result.pack, result.sticker, options, invalidSizes) : '';
 }
 
 /**
@@ -85,7 +131,7 @@ export function renderTokenHtml(token, effectiveSet, misses) {
  * @param {RenderOptions} options
  * @returns {string}
  */
-function renderChunk(chunk, effectiveSet, misses, escape, options) {
+function renderChunk(chunk, effectiveSet, misses, escape, options, invalidSizes) {
     const tokens = findTokens(chunk, options);
     if (tokens.length === 0) {
         return escape ? escapeText(chunk) : chunk;
@@ -96,7 +142,7 @@ function renderChunk(chunk, effectiveSet, misses, escape, options) {
     for (const token of tokens) {
         const between = chunk.slice(cursor, token.index);
         out += escape ? escapeText(between) : between;
-        out += renderTokenHtml(token, effectiveSet, misses);
+        out += renderTokenHtml(token, effectiveSet, misses, options, invalidSizes);
         cursor = token.index + token.raw.length;
     }
     const tail = chunk.slice(cursor);
@@ -115,16 +161,212 @@ function renderChunk(chunk, effectiveSet, misses, escape, options) {
  */
 export function renderText(text, effectiveSet, options = {}) {
     const misses = [];
-    const html = renderChunk(String(text ?? ''), effectiveSet, misses, true, options);
-    return { html, misses };
+    const invalidSizes = [];
+    const html = renderChunk(String(text ?? ''), effectiveSet, misses, true, options, invalidSizes);
+    return { html, misses, invalidSizes };
 }
 
 const TAG_PATTERN = /<[^>]*>/g;
 const TAG_NAME_PATTERN = /^<\/?\s*([a-zA-Z0-9-]+)/;
+const SELF_CLOSING_SUFFIX = '/>';
+const PLACED_IMG_PATTERN = /<img\b[^>]*>/g;
+const PLACEMENT_ATTRIBUTE_PATTERN = /\bdata-st-emote-placement="([^"]*)"/;
 
 function htmlTagName(tag) {
     const match = TAG_NAME_PATTERN.exec(tag);
     return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Elements that never have a closing tag. The tag-stack walk must not push
+ * them, or every following boundary would be attributed to them.
+ */
+const VOID_TAGS = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+    'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+/**
+ * Record the extent of every block container in a piece of HTML, so a sticker
+ * can be moved to the boundary of the block it was written in.
+ *
+ * A line break is not a block: `<br>` is a void element and never opens a
+ * container, so a token after one still resolves to the paragraph it sits in.
+ *
+ * @param {string} html
+ * @returns {{name: string, start: number, contentEnd: number, end: number}[]}
+ */
+function findBlockContainers(html) {
+    const containers = [];
+    const stack = [];
+    TAG_PATTERN.lastIndex = 0;
+
+    let match;
+    while ((match = TAG_PATTERN.exec(html)) !== null) {
+        const tag = match[0];
+        const name = htmlTagName(tag);
+        if (!name) {
+            continue;
+        }
+        if (tag.startsWith('</')) {
+            for (let i = stack.length - 1; i >= 0; i -= 1) {
+                if (stack[i].name !== name) {
+                    continue;
+                }
+                const frame = stack[i];
+                stack.length = i;
+                frame.contentEnd = match.index;
+                frame.end = match.index + tag.length;
+                containers.push(frame);
+                break;
+            }
+            continue;
+        }
+        if (VOID_TAGS.has(name) || tag.endsWith(SELF_CLOSING_SUFFIX)) {
+            continue;
+        }
+        const frame = { name, start: match.index, contentEnd: -1, end: -1 };
+        stack.push(frame);
+        if (BLOCK_CONTAINER_TAGS.has(name)) {
+            containers.push(frame);
+        }
+    }
+
+    // A block container left open runs to the end of the message.
+    for (const frame of stack) {
+        if (BLOCK_CONTAINER_TAGS.has(frame.name)) {
+            frame.contentEnd = html.length;
+            frame.end = html.length;
+            containers.push(frame);
+        }
+    }
+    return containers;
+}
+
+/**
+ * The innermost block container holding the offset, or null at the top level.
+ *
+ * @param {{name: string, start: number, end: number}[]} containers
+ * @param {number} offset
+ * @returns {{name: string, start: number, contentEnd: number, end: number}|null}
+ */
+function innermostContainer(containers, offset) {
+    let best = null;
+    for (const container of containers) {
+        if (container.start > offset || container.end <= offset) {
+            continue;
+        }
+        if (!best || container.start > best.start) {
+            best = container;
+        }
+    }
+    return best;
+}
+
+/**
+ * Tag an image as already placed, so a later pass over the same message leaves
+ * it where it is. Only our own `<img …>` markup reaches here, so the tag always
+ * ends with `>`.
+ *
+ * @param {string} imgTag
+ * @returns {string}
+ */
+function markPlaced(imgTag) {
+    return `${imgTag.slice(0, -1)} ${PLACED_ATTRIBUTE}="1">`;
+}
+
+/**
+ * Move every sticker that is not rendered in place to where its 投放方式 says
+ * it belongs: `after-block` to just past the block the token was written in,
+ * `message-end` to the end of the message. Images heading for the same boundary
+ * keep their source order, so a block of them stacks the way it was written.
+ *
+ * This is the HTML-in/HTML-out half of the rule. The DOM path applies the same
+ * boundaries to live nodes, using `nearestBlockAncestor` and
+ * `blockBoundaryMode` from `core/placement.js`.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+export function relocatePlacedImages(html) {
+    const source = String(html ?? '');
+    if (!source.includes('data-st-emote-placement')) {
+        return source;
+    }
+
+    // Collect the images that are not rendered in place and have not been moved
+    // yet, with the placement that decides where each of them goes.
+    const placed = [];
+    PLACED_IMG_PATTERN.lastIndex = 0;
+    let match;
+    while ((match = PLACED_IMG_PATTERN.exec(source)) !== null) {
+        const placement = PLACEMENT_ATTRIBUTE_PATTERN.exec(match[0])?.[1];
+        if (placement === undefined || !isBlockPlacement(placement)) {
+            continue;
+        }
+        if (match[0].includes(PLACED_ATTRIBUTE)) {
+            continue;
+        }
+        placed.push({
+            placement,
+            start: match.index,
+            end: match.index + match[0].length,
+            text: markPlaced(match[0]),
+        });
+    }
+    if (placed.length === 0) {
+        return source;
+    }
+
+    // The container scan only pays off when something wants a block boundary;
+    // `message-end` images all head for the same place regardless.
+    const containers = placed.some((image) => image.placement === 'after-block')
+        ? findBlockContainers(source)
+        : [];
+
+    /** @type {Map<number, {text: string, start: number, end: number}[]>} */
+    const insertions = new Map();
+    for (const image of placed) {
+        const container = image.placement === 'after-block'
+            ? innermostContainer(containers, image.start)
+            : null;
+        const mode = image.placement === 'message-end'
+            ? 'message-end'
+            : blockBoundaryMode(container?.name ?? null);
+        const at = mode === 'message-end'
+            ? source.length
+            : mode === 'inside' ? container.contentEnd : container.end;
+        if (!insertions.has(at)) {
+            insertions.set(at, []);
+        }
+        insertions.get(at).push(image);
+    }
+
+    // One forward pass over the untouched source: drop each image where it was
+    // written and re-emit it at its boundary. A boundary never falls inside a
+    // removed range, because a boundary is a `</…>` position (or the end of the
+    // message) and a removed range is a whole `<img …>` tag.
+    const boundaries = [...insertions.keys()].sort((a, b) => a - b);
+    const removals = [...placed].sort((a, b) => a.start - b.start);
+    let out = '';
+    let cursor = 0;
+    let removalIndex = 0;
+
+    for (const at of boundaries) {
+        while (removalIndex < removals.length && removals[removalIndex].end <= at) {
+            const removal = removals[removalIndex];
+            removalIndex += 1;
+            out += source.slice(cursor, removal.start);
+            cursor = removal.end;
+        }
+        out += source.slice(cursor, at);
+        cursor = at;
+        for (const image of insertions.get(at)) {
+            out += image.text;
+        }
+    }
+    out += source.slice(cursor);
+    return out;
 }
 
 /**
@@ -144,6 +386,7 @@ function htmlTagName(tag) {
 export function renderHtml(html, effectiveSet, options = {}) {
     const source = String(html ?? '');
     const misses = [];
+    const invalidSizes = [];
     const tokens = findTokens(source, options);
     let tokenIndex = 0;
     let out = '';
@@ -166,8 +409,8 @@ export function renderHtml(html, effectiveSet, options = {}) {
                 // Consumed as ordinary text below, once a tag moves the cursor.
                 continue;
             }
-            out += renderChunk(source.slice(cursor, nextToken.index), effectiveSet, misses, false, options);
-            out += renderTokenHtml(nextToken, effectiveSet, misses);
+            out += renderChunk(source.slice(cursor, nextToken.index), effectiveSet, misses, false, options, invalidSizes);
+            out += renderTokenHtml(nextToken, effectiveSet, misses, options, invalidSizes);
             cursor = nextToken.index + nextToken.raw.length;
             continue;
         }
@@ -176,14 +419,14 @@ export function renderHtml(html, effectiveSet, options = {}) {
             const tail = source.slice(cursor);
             out += codeDepth > 0
                 ? tail
-                : renderChunk(tail, effectiveSet, misses, false, options);
+                : renderChunk(tail, effectiveSet, misses, false, options, invalidSizes);
             break;
         }
 
         const between = source.slice(cursor, nextTag.index);
         out += codeDepth > 0
             ? between
-            : renderChunk(between, effectiveSet, misses, false, options);
+            : renderChunk(between, effectiveSet, misses, false, options, invalidSizes);
         out += nextTag.text;
 
         const name = htmlTagName(nextTag.text);
@@ -197,5 +440,5 @@ export function renderHtml(html, effectiveSet, options = {}) {
         cursor = nextTag.index + nextTag.text.length;
     }
 
-    return { html: out, misses };
+    return { html: relocatePlacedImages(out), misses, invalidSizes };
 }
