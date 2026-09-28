@@ -2,6 +2,7 @@ import { escapeAttribute, escapeText } from './escape.js';
 import {
     BLOCK_CONTAINER_TAGS,
     PLACED_ATTRIBUTE,
+    PLACEMENT_ATTRIBUTE,
     blockBoundaryMode,
     isBlockPlacement,
     resolvePlacement,
@@ -15,14 +16,20 @@ import { findTokens } from './token.js';
  * class name; the official-hook path (ticket 05) must emit the un-prefixed
  * `st-emote` and let SillyTavern's sanitizer add the `custom-` prefix, so the
  * two paths converge on this one name and one stylesheet.
+ *
+ * Every sticker image carries it, whatever its 投放方式, because both render
+ * paths select on it. Whether an image was placed in place or moved is a
+ * behaviour question, and behaviour is carried by `data-*` (ADR-0002), never by
+ * the class list.
  */
 export const STICKER_CLASS = 'custom-st-emote';
 
 /**
- * Modifier class for a sticker that owns its own block. Derived from
- * `STICKER_CLASS`, so both render paths style block images with one rule.
+ * Modifier class added alongside `STICKER_CLASS` to a sticker that owns its own
+ * block. Applied as an addition, not a replacement: `img.custom-st-emote` has to
+ * keep matching block images, or the DOM path would stop seeing them.
  */
-export const STICKER_BLOCK_CLASS = `${STICKER_CLASS}-block`;
+export const STICKER_BLOCK_SUFFIX = '-block';
 
 /**
  * @typedef {Object} Miss
@@ -44,8 +51,8 @@ export const STICKER_BLOCK_CLASS = `${STICKER_CLASS}-block`;
  * @property {string} [tagName] - Name of the configurable HTML-tag form.
  * @property {import('./placement.js').Placement} [placement] - The global
  *   投放方式; a sticker may override it.
- * @property {import('./size.js').SizeSets} [sizes] - The `inline` and `block`
- *   size sets.
+ * @property {import('./size.js').PartialSizeSets} [sizes] - The `inline` and
+ *   `block` 尺寸集.
  * @property {string} [className] - Base class name. The DOM path writes the
  *   final `custom-st-emote`; the official-hook path passes the un-prefixed
  *   `st-emote` and lets SillyTavern's sanitizer add the `custom-` prefix, so
@@ -53,15 +60,20 @@ export const STICKER_BLOCK_CLASS = `${STICKER_CLASS}-block`;
  */
 
 /**
- * The class list of one sticker image: the base class, plus the block modifier
- * when the sticker is not rendered in place.
+ * The class list of one sticker image: the base class every image carries, plus
+ * the block modifier when the sticker is not rendered in place.
  *
  * @param {import('./placement.js').Placement} placement
- * @param {string} className
+ * @param {string} [className] - Base class name, so the official-hook path can
+ *   pass the un-prefixed `st-emote` and let SillyTavern's sanitizer add
+ *   `custom-` to both classes.
  * @returns {string}
  */
 export function stickerClassNames(placement, className = STICKER_CLASS) {
-    return isBlockPlacement(placement) ? `${className}-block` : className;
+    if (!isBlockPlacement(placement)) {
+        return className;
+    }
+    return `${className} ${className}${STICKER_BLOCK_SUFFIX}`;
 }
 
 function resolveToken(token, effectiveSet, misses) {
@@ -97,7 +109,7 @@ function stickerHtml(pack, sticker, options, invalidSizes) {
         + ` style="${escapeAttribute(size.style)}"`
         + ` data-st-emote-pack="${escapeAttribute(pack.name)}"`
         + ` data-st-emote-label="${escapeAttribute(sticker.label)}"`
-        + ` data-st-emote-placement="${placement}">`;
+        + ` ${PLACEMENT_ATTRIBUTE}="${placement}">`;
 }
 
 /**
@@ -170,7 +182,7 @@ const TAG_PATTERN = /<[^>]*>/g;
 const TAG_NAME_PATTERN = /^<\/?\s*([a-zA-Z0-9-]+)/;
 const SELF_CLOSING_SUFFIX = '/>';
 const PLACED_IMG_PATTERN = /<img\b[^>]*>/g;
-const PLACEMENT_ATTRIBUTE_PATTERN = /\bdata-st-emote-placement="([^"]*)"/;
+const PLACEMENT_ATTRIBUTE_PATTERN = new RegExp(`\\b${PLACEMENT_ATTRIBUTE}="([^"]*)"`);
 
 function htmlTagName(tag) {
     const match = TAG_NAME_PATTERN.exec(tag);
@@ -282,15 +294,15 @@ function markPlaced(imgTag) {
  * keep their source order, so a block of them stacks the way it was written.
  *
  * This is the HTML-in/HTML-out half of the rule. The DOM path applies the same
- * boundaries to live nodes, using `nearestBlockAncestor` and
- * `blockBoundaryMode` from `core/placement.js`.
+ * boundaries to live nodes, walking up with `BLOCK_CONTAINER_SELECTOR` and
+ * asking `blockBoundaryMode` from `core/placement.js` where the image goes.
  *
  * @param {string} html
  * @returns {string}
  */
 export function relocatePlacedImages(html) {
     const source = String(html ?? '');
-    if (!source.includes('data-st-emote-placement')) {
+    if (!source.includes(PLACEMENT_ATTRIBUTE)) {
         return source;
     }
 

@@ -3,6 +3,7 @@ import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import {
     BLOCK_CONTAINER_SELECTOR,
     PLACED_ATTRIBUTE,
+    PLACEMENT_ATTRIBUTE,
     blockBoundaryMode,
     isBlockPlacement,
 } from '../core/placement.js';
@@ -286,8 +287,10 @@ function nearestBlockAncestorElement(image, root) {
  */
 function relocateStickerImages(textElement) {
     const images = Array.from(
-        textElement.querySelectorAll(`img.${STICKER_CLASS}[data-st-emote-placement]:not([${PLACED_ATTRIBUTE}])`),
-    ).filter((image) => isBlockPlacement(image.getAttribute('data-st-emote-placement')));
+        textElement.querySelectorAll(
+            `img.${STICKER_CLASS}[${PLACEMENT_ATTRIBUTE}]:not([${PLACED_ATTRIBUTE}])`,
+        ),
+    ).filter((image) => isBlockPlacement(image.getAttribute(PLACEMENT_ATTRIBUTE)));
     if (images.length === 0) {
         return 0;
     }
@@ -404,6 +407,9 @@ function renderMessageById(context, messageId) {
 /**
  * Remove an image that failed to load and leave a console trace. Missing
  * files and dead external links both surface here.
+ *
+ * The check is on the base class, which every sticker image carries whatever its
+ * 投放方式; a block image is still one of ours.
  *
  * @param {Event} event
  */

@@ -2,8 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildEffectiveSet } from '../core/effective-set.js';
+import { PLACEMENT_ATTRIBUTE } from '../core/placement.js';
 import { STICKER_CLASS, renderHtml, renderText } from '../core/render.js';
 import {
+    SIZE_FIELDS,
+    SIZE_SETS,
+    defaultSizeValue,
     ensureSizeSet,
     ensureSizeSets,
     evaluateSize,
@@ -69,7 +73,7 @@ test('readSizeSet keeps valid values, drops invalid ones and reports them', () =
 
 test('an unset inline size falls back to max-height 3em', () => {
     assert.deepEqual(evaluateSize('inline', null), {
-        context: 'inline',
+        sizeSet: 'inline',
         style: 'max-height: 3em; object-fit: contain',
         invalid: [],
     });
@@ -113,8 +117,21 @@ test('an invalid fill mode is treated as unset', () => {
     assert.deepEqual(result.invalid, [{ field: 'fit', value: 'squish' }]);
 });
 
-test('an unknown size context falls back to the inline set', () => {
-    assert.equal(evaluateSize('sideways', { block: { maxWidth: '50%' } }).context, 'inline');
+test('an unknown size set falls back to inline', () => {
+    assert.equal(evaluateSize('sideways', { block: { maxWidth: '50%' } }).sizeSet, 'inline');
+});
+
+test('SIZE_FIELDS is the panel order and drives the stored shape', () => {
+    assert.deepEqual(SIZE_FIELDS, ['minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'fit']);
+    assert.deepEqual(Object.keys(ensureSizeSet(null)), SIZE_FIELDS);
+});
+
+test('defaultSizeValue reports the field default the panel shows as a placeholder', () => {
+    assert.equal(defaultSizeValue('inline', 'maxHeight'), '3em');
+    assert.equal(defaultSizeValue('inline', 'maxWidth'), '');
+    assert.equal(defaultSizeValue('block', 'maxWidth'), '100%');
+    assert.equal(defaultSizeValue('block', 'maxHeight'), '');
+    assert.equal(defaultSizeValue('sideways', 'maxHeight'), '3em');
 });
 
 test('the invalid sizes of a render are reported back to the caller', () => {
@@ -139,6 +156,11 @@ test('the rendered image carries the evaluated size and the in-place class', () 
         html,
         `a <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy"`
         + ' style="max-height: 2.5em; object-fit: cover" data-st-emote-pack="daily"'
-        + ' data-st-emote-label="happy" data-st-emote-placement="in-place"> b',
+        + ' data-st-emote-label="happy" ' + PLACEMENT_ATTRIBUTE + '="in-place"> b',
     );
+});
+
+test('SIZE_SETS is the two 尺寸集 the panel shows, in order', () => {
+    assert.deepEqual(SIZE_SETS, ['inline', 'block']);
+    assert.deepEqual(Object.keys(ensureSizeSets(null)), SIZE_SETS);
 });

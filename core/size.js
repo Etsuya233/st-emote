@@ -1,17 +1,21 @@
 /**
- * Size configuration: two independent sets, one for images rendered in place
- * (`inline`) and one for images rendered as their own block (`block`).
+ * 尺寸集 (Size set): the size configuration for one kind of sticker. There are
+ * two — `inline` for 原地 images, `block` for 块后 and 消息末尾 images — and
+ * each is a minimum/maximum width and height plus a fill mode.
  *
  * Values are hand-typed strings that are handed to CSS verbatim. A value that
  * is not a `<number><em|px|%>` pair is *not* an error that blocks editing: it
  * is treated as unset (the default for that field applies) and reported so the
  * caller can surface a hint.
+ *
+ * Nothing in this module is called a "context": in this project that word means
+ * the SillyTavern context in the adapter and 作用域 on the user-facing side.
  */
 
-/** The two size sets, in the order the settings panel shows them. */
-export const SIZE_CONTEXTS = ['inline', 'block'];
+/** The two 尺寸集, in the order the settings panel shows them. */
+export const SIZE_SETS = ['inline', 'block'];
 
-/** The fill modes offered for each set. */
+/** The fill modes offered for each 尺寸集. */
 export const FIT_MODES = ['cover', 'contain', 'fill'];
 
 /** Fill mode used when the user picked none. */
@@ -29,7 +33,7 @@ const SIZE_PROPERTIES = {
     fit: 'object-fit',
 };
 
-/** Human-facing names, in the order they appear in the settings panel. */
+/** The stored fields, in the order they appear in the settings panel. */
 export const SIZE_FIELDS = Object.keys(SIZE_PROPERTIES);
 
 /**
@@ -51,17 +55,33 @@ export const SIZE_DEFAULTS = {
 const SIZE_VALUE_PATTERN = /^(?:0|\d*\.?\d+(?:em|px|%))$/i;
 
 /**
+ * @typedef {'inline'|'block'} SizeSetKey
+ */
+
+/**
  * @typedef {Object} SizeSet
- * @property {string} [minWidth]
- * @property {string} [minHeight]
- * @property {string} [maxWidth]
- * @property {string} [maxHeight]
- * @property {string} [fit] - `cover` / `contain` / `fill`, or empty for the
+ * @property {string} minWidth
+ * @property {string} minHeight
+ * @property {string} maxWidth
+ * @property {string} maxHeight
+ * @property {string} fit - `cover` / `contain` / `fill`, or empty for the
  *   default fill mode.
  */
 
 /**
+ * The stored configuration: both 尺寸集 are always present, because
+ * `ensureSizeSets` fills in whatever the payload is missing.
+ *
  * @typedef {Object} SizeSets
+ * @property {SizeSet} inline
+ * @property {SizeSet} block
+ */
+
+/**
+ * The same shape, for input that may be incomplete: a caller reading a
+ * configuration does not have to have run it through `ensureSizeSets` first.
+ *
+ * @typedef {Object} PartialSizeSets
  * @property {SizeSet} [inline]
  * @property {SizeSet} [block]
  */
@@ -74,7 +94,7 @@ const SIZE_VALUE_PATTERN = /^(?:0|\d*\.?\d+(?:em|px|%))$/i;
 
 /**
  * @typedef {Object} SizeEvaluation
- * @property {'inline'|'block'} context
+ * @property {SizeSetKey} sizeSet
  * @property {string} style - CSS declaration text for a `style` attribute.
  * @property {InvalidSize[]} invalid - Values that were treated as unset.
  */
@@ -82,6 +102,14 @@ const SIZE_VALUE_PATTERN = /^(?:0|\d*\.?\d+(?:em|px|%))$/i;
 /**
  * @typedef {{ok: true, value: string} | {ok: false, reason: string}} SizeValidation
  */
+
+/**
+ * @param {unknown} sizeSet
+ * @returns {SizeSetKey}
+ */
+function resolveSizeSetKey(sizeSet) {
+    return SIZE_SETS.includes(sizeSet) ? /** @type {SizeSetKey} */ (sizeSet) : 'inline';
+}
 
 /**
  * Validate one hand-typed length. An empty value is valid and means "unset":
@@ -119,8 +147,8 @@ export function validateFitMode(value) {
 }
 
 /**
- * Give a stored size set the full field set, so the settings panel always has
- * an input to bind to. No validation happens here: an invalid value is kept as
+ * Give a stored 尺寸集 the full field set, so the settings panel always has an
+ * input to bind to. No validation happens here: an invalid value is kept as
  * typed, because it is not a reason to stop the user from editing.
  *
  * @param {unknown} raw
@@ -136,10 +164,10 @@ export function ensureSizeSet(raw) {
 }
 
 /**
- * Give a stored size configuration both sets.
+ * Give a stored size configuration both 尺寸集.
  *
  * @param {unknown} raw
- * @returns {Required<SizeSets>}
+ * @returns {SizeSets}
  */
 export function ensureSizeSets(raw) {
     const source = raw && typeof raw === 'object' ? raw : {};
@@ -150,7 +178,7 @@ export function ensureSizeSets(raw) {
 }
 
 /**
- * Validate one stored size set. Valid values are returned trimmed; invalid ones
+ * Validate one stored 尺寸集. Valid values are returned trimmed; invalid ones
  * come back as empty (treated as unset) and are listed so the caller can log
  * them and show a hint.
  *
@@ -174,31 +202,30 @@ export function readSizeSet(raw) {
 }
 
 /**
- * The default value of one stored field in one size set, or an empty string
- * when that field has no default. The settings panel shows it as the input's
+ * The default value of one stored field in one 尺寸集, or an empty string when
+ * that field has no default. The settings panel shows it as the input's
  * placeholder, so leaving a field empty reads as a decision rather than a gap.
  *
- * @param {unknown} context
+ * @param {unknown} sizeSet
  * @param {unknown} field - Stored field name, e.g. `maxHeight`.
  * @returns {string}
  */
-export function defaultSizeValue(context, field) {
-    const which = SIZE_CONTEXTS.includes(context) ? context : 'inline';
-    return SIZE_DEFAULTS[which][SIZE_PROPERTIES[String(field)]] ?? '';
+export function defaultSizeValue(sizeSet, field) {
+    return SIZE_DEFAULTS[resolveSizeSetKey(sizeSet)][SIZE_PROPERTIES[String(field)]] ?? '';
 }
 
 /**
- * Evaluate one size set into a CSS declaration string. Empty and invalid
- * fields fall back to the default for that field, so a huge image never blows
- * the layout apart even with no configuration at all.
+ * Evaluate one 尺寸集 into a CSS declaration string. Empty and invalid fields
+ * fall back to the default for that field, so a huge image never blows the
+ * layout apart even with no configuration at all.
  *
- * @param {'inline'|'block'} context
- * @param {unknown} sizes - The whole configuration; the set for `context` is
- *   picked out of it.
+ * @param {unknown} sizeSet - Which 尺寸集 to evaluate.
+ * @param {PartialSizeSets|null|undefined} sizes - The whole configuration; the
+ *   set for `sizeSet` is picked out of it.
  * @returns {SizeEvaluation}
  */
-export function evaluateSize(context, sizes) {
-    const which = SIZE_CONTEXTS.includes(context) ? context : 'inline';
+export function evaluateSize(sizeSet, sizes) {
+    const which = resolveSizeSetKey(sizeSet);
     const source = sizes && typeof sizes === 'object' ? sizes[which] : null;
     const { set, invalid } = readSizeSet(source);
     const defaults = SIZE_DEFAULTS[which];
@@ -212,5 +239,5 @@ export function evaluateSize(context, sizes) {
             declarations.push(`${property}: ${value || DEFAULT_FIT}`);
         }
     }
-    return { context: which, style: declarations.join('; '), invalid };
+    return { sizeSet: which, style: declarations.join('; '), invalid };
 }

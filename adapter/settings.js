@@ -36,7 +36,7 @@ const SCHEMA_VERSION = 1;
  * @property {boolean} renderUserMessages - Render tokens in user messages too.
  * @property {import('../core/placement.js').Placement} placement - Global 投放方式.
  * @property {import('../core/size.js').SizeSets} sizes - The `inline` and
- *   `block` size sets.
+ *   `block` 尺寸集, always both present after `ensureSettings`.
  */
 
 /**

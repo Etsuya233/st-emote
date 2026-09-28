@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildEffectiveSet } from '../core/effective-set.js';
+import { PLACED_ATTRIBUTE, PLACEMENT_ATTRIBUTE } from '../core/placement.js';
 import { STICKER_CLASS, renderHtml, renderText } from '../core/render.js';
 
 const packs = [
@@ -96,7 +97,7 @@ test('tokens inside a pre block are untouched', () => {
 test('tokens after a code block are still rendered', () => {
     const source = '<code>[[sticker:daily:happy]]</code> [[sticker:daily:happy]]';
     const { html } = renderHtml(source, setWith(['daily']));
-    assert.equal(html, `<code>[[sticker:daily:happy]]</code> <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy" style="max-height: 3em; object-fit: contain" data-st-emote-pack="daily" data-st-emote-label="happy" data-st-emote-placement="in-place">`);
+    assert.equal(html, `<code>[[sticker:daily:happy]]</code> <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy" style="max-height: 3em; object-fit: contain" data-st-emote-pack="daily" data-st-emote-label="happy" ${PLACEMENT_ATTRIBUTE}="in-place">`);
 });
 
 test('attribute values are escaped', () => {
@@ -240,6 +241,8 @@ test('an in-place sticker next to an after-block one lands in the same message',
         set,
     );
     assert.equal(html.match(/<img /g).length, 2);
-    assert.match(html, /^<p>first <img [^>]*data-st-emote-placement="in-place"> then <\/p>/);
-    assert.match(html, /<\/p><img [^>]*data-st-emote-placement="after-block" data-st-emote-placed="1">\n<p>next<\/p>$/);
+    assert.match(html, new RegExp(`^<p>first <img [^>]*${PLACEMENT_ATTRIBUTE}="in-place"> then </p>`));
+    assert.match(html, new RegExp(
+        `</p><img [^>]*${PLACEMENT_ATTRIBUTE}="after-block" ${PLACED_ATTRIBUTE}="1">\\n<p>next</p>$`,
+    ));
 });

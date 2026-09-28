@@ -3,10 +3,11 @@
  * `class="st-emote"` and SillyTavern adds the `custom-` prefix; the DOM path
  * writes `custom-st-emote` directly. Styles are maintained only here.
  *
- * Only the presentation that no setting can change lives here. The size bounds
+ * Every sticker image carries this class, block ones included (ADR-0002), so
+ * only values that are correct for *both* 尺寸集 may live here. The size bounds
  * and the fill mode arrive as an inline `style` on the image, evaluated from the
- * `inline` / `block` size set that matches the sticker's 投放方式, so the
- * `max-height: 3em` that suits text-sized images never leaks onto a block image.
+ * 尺寸集 that matches the sticker's 投放方式; a `max-height` here would follow the
+ * base class straight onto a block image.
  */
 .custom-st-emote {
     max-width: 100%;
@@ -15,8 +16,9 @@
 }
 
 /*
- * A sticker that is not rendered in place. One image per block, so several in
- * the same message stack vertically instead of sitting side by side.
+ * Added alongside the base class for a sticker that owns its own block. One
+ * image per block, so several in the same message stack vertically instead of
+ * sitting side by side.
  */
 .custom-st-emote-block {
     display: block;

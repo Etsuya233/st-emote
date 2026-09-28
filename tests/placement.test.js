@@ -2,22 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    BLOCK_CONTAINER_TAGS,
     DEFAULT_PLACEMENT,
     PLACED_ATTRIBUTE,
     PLACEMENTS,
+    PLACEMENT_ATTRIBUTE,
     blockBoundaryMode,
     isBlockPlacement,
-    nearestBlockAncestor,
     resolvePlacement,
     sizeSetForPlacement,
     validatePlacement,
 } from '../core/placement.js';
 import { buildEffectiveSet } from '../core/effective-set.js';
 import {
-    STICKER_BLOCK_CLASS,
+    STICKER_BLOCK_SUFFIX,
     STICKER_CLASS,
     relocatePlacedImages,
     renderHtml,
+    stickerClassNames,
 } from '../core/render.js';
 
 const packs = [
@@ -38,10 +40,10 @@ const set = buildEffectiveSet(packs, ['daily']);
  * that says relocation already happened.
  */
 function blockImage(file, label, placement) {
-    return `<img class="${STICKER_BLOCK_CLASS}" src="user/images/st-emote/${file}"`
+    return `<img class="${stickerClassNames(placement)}" src="user/images/st-emote/${file}"`
         + ` alt="${label}" style="max-width: 100%; object-fit: contain"`
         + ` data-st-emote-pack="daily" data-st-emote-label="${label}"`
-        + ` data-st-emote-placement="${placement}" ${PLACED_ATTRIBUTE}="1">`;
+        + ` ${PLACEMENT_ATTRIBUTE}="${placement}" ${PLACED_ATTRIBUTE}="1">`;
 }
 
 test('validatePlacement accepts the three placements and empty, rejects the rest', () => {
@@ -74,12 +76,14 @@ test('isBlockPlacement agrees with the size set about what counts as a block', (
     assert.equal(isBlockPlacement(''), false);
 });
 
-test('nearestBlockAncestor picks the closest block, and not a line break', () => {
-    assert.equal(nearestBlockAncestor(['p', 'blockquote']), 'p');
-    assert.equal(nearestBlockAncestor(['br', 'p']), 'p');
-    assert.equal(nearestBlockAncestor(['span', 'em']), null);
-    assert.equal(nearestBlockAncestor(['TD']), 'td');
-    assert.equal(nearestBlockAncestor([]), null);
+test('the block container list holds the blocks the spec names, and not a line break', () => {
+    // The block list is the rule; the DOM path walks ancestors with it.
+    for (const tag of ['p', 'li', 'blockquote', 'h1', 'h6', 'td', 'th', 'div']) {
+        assert.equal(BLOCK_CONTAINER_TAGS.has(tag), true, tag);
+    }
+    for (const tag of ['br', 'span', 'em', 'strong', 'code', 'img', 'a']) {
+        assert.equal(BLOCK_CONTAINER_TAGS.has(tag), false, tag);
+    }
 });
 
 test('blockBoundaryMode keeps a table cell intact and ends a message without a block', () => {
@@ -94,9 +98,62 @@ test('in-place is the default and keeps the image inside the text', () => {
     const { html } = renderHtml('<p>hi [[sticker:daily:happy]]</p>', set);
     assert.equal(html.startsWith('<p>hi <img '), true);
     assert.equal(html.endsWith('</p>'), true);
+    assert.equal(stickerClassNames('in-place'), STICKER_CLASS);
     assert.match(html, new RegExp(`class="${STICKER_CLASS}"`));
-    assert.doesNotMatch(html, new RegExp(STICKER_BLOCK_CLASS));
-    assert.match(html, /data-st-emote-placement="in-place"/);
+    assert.doesNotMatch(html, new RegExp(STICKER_BLOCK_SUFFIX));
+    assert.match(html, new RegExp(`${PLACEMENT_ATTRIBUTE}="in-place"`));
+});
+
+test('a block image carries the base class as well as the block modifier', () => {
+    assert.equal(
+        stickerClassNames('after-block'),
+        `${STICKER_CLASS} ${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}`,
+    );
+    assert.equal(
+        stickerClassNames('message-end'),
+        `${STICKER_CLASS} ${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}`,
+    );
+});
+
+test('every rendered image is selectable by the base class, whatever the placement', () => {
+    // This is the contract the DOM path depends on: `img.custom-st-emote` finds
+    // every sticker, and the placement lives in `data-*`, never in the class
+    // list. Losing the base class on block images silently disables block
+    // placement on that path, so assert it for all three placements.
+    for (const placement of PLACEMENTS) {
+        const { html } = renderHtml(
+            '<p>a [[sticker:daily:happy]]</p><p>b [[sticker:daily:sad]]</p>',
+            set,
+            { placement },
+        );
+        const images = html.match(/<img\b[^>]*>/g) ?? [];
+        assert.equal(images.length, 2, placement);
+        for (const image of images) {
+            const classes = /class="([^"]*)"/.exec(image)?.[1].split(' ') ?? [];
+            assert.equal(classes.includes(STICKER_CLASS), true, `${placement}: ${image}`);
+            assert.match(image, new RegExp(`\\b${PLACEMENT_ATTRIBUTE}="${placement}"`));
+            if (placement === 'in-place') {
+                assert.deepEqual(classes, [STICKER_CLASS]);
+            } else {
+                assert.deepEqual(classes, [STICKER_CLASS, `${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}`]);
+            }
+        }
+    }
+});
+
+test('the hook path can emit the un-prefixed class and still get both names back', () => {
+    // Ticket 05 passes `st-emote`; SillyTavern's sanitizer prefixes every class,
+    // so the block modifier has to be a sibling class, not a replacement.
+    assert.equal(stickerClassNames('in-place', 'st-emote'), 'st-emote');
+    assert.equal(
+        stickerClassNames('after-block', 'st-emote'),
+        'st-emote st-emote-block',
+    );
+    const { html } = renderHtml('<p>[[sticker:daily:happy]]</p>', set, {
+        placement: 'after-block',
+        className: 'st-emote',
+    });
+    assert.match(html, /<img class="st-emote st-emote-block" /);
 });
 
 test('after-block lands between the paragraph and the next one', () => {
@@ -188,7 +245,10 @@ test('several block images after one paragraph each become their own block', () 
     const images = html.match(/<img\b[^>]*>/g);
     assert.equal(images.length, 2);
     for (const image of images) {
-        assert.match(image, new RegExp(`class="${STICKER_BLOCK_CLASS}"`));
+        assert.match(
+            image,
+            new RegExp(`class="${STICKER_CLASS} ${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}"`),
+        );
     }
     assert.match(html, /^<p> <\/p><img [^>]*><img [^>]*>$/);
 });
@@ -200,7 +260,9 @@ test('a sticker overrides the global placement and switches size set with it', (
         { placement: 'in-place', sizes: { block: { maxWidth: '50%' } } },
     );
     assert.match(html, new RegExp(`class="${STICKER_CLASS}"[^>]*style="max-height: 3em; object-fit: contain"`));
-    assert.match(html, new RegExp(`class="${STICKER_BLOCK_CLASS}"[^>]*style="max-width: 50%; object-fit: contain"`));
+    assert.match(html, new RegExp(
+        `class="${STICKER_CLASS} ${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}"[^>]*style="max-width: 50%; object-fit: contain"`,
+    ));
     // The overriding sticker left the paragraph; the in-place one stayed in it.
     assert.match(html, /^<p>a <img [^>]*> b {2}c<\/p><img /);
 });

@@ -11,7 +11,8 @@ import { normalizeLabel } from '../core/normalize.js';
 import { PLACEMENTS } from '../core/placement.js';
 import {
     FIT_MODES,
-    SIZE_CONTEXTS,
+    SIZE_FIELDS,
+    SIZE_SETS,
     defaultSizeValue,
     validateFitMode,
     validateSizeValue,
@@ -153,7 +154,9 @@ export function mountSettingsPanel(context) {
         '<div class="st-emote-hint">',
         'Where a sticker shows up and how big it is. Write sizes as a number with ',
         '<code>em</code>, <code>px</code> or <code>%</code>; <code>1em</code> is the ',
-        'current chat text height. An empty field falls back to its default.',
+        'current chat text height. An empty field falls back to its default. ',
+        '<code>%</code> is only meaningful on a width: a percentage height depends ',
+        'on the parent having a height of its own.',
         '</div>',
         '<div class="st-emote-placement">',
         '<label class="st-emote-field">',
@@ -327,43 +330,80 @@ function buildSizeInput(label, placeholder) {
 }
 
 /**
- * The `inline` or `block` size set: four hand-typed bounds and a fill mode.
+ * The fill-mode control: a `<select>`, because the three modes are a closed
+ * set rather than something to hand-type.
+ *
+ * @param {import('../core/size.js').SizeSet} stored
+ * @param {(fit: string) => void} onChange
+ * @returns {Element}
+ */
+function buildFitField(stored, onChange) {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'st-emote-field';
+
+    const caption = document.createElement('span');
+    caption.textContent = SIZE_FIELD_LABELS.fit;
+
+    const select = document.createElement('select');
+    select.className = 'text_pole';
+    select.append(option('', 'default'));
+    for (const mode of FIT_MODES) {
+        select.append(option(mode, mode));
+    }
+    const check = validateFitMode(stored.fit);
+    select.value = check.ok ? check.value : '';
+    select.addEventListener('change', () => onChange(select.value));
+
+    wrapper.append(caption, select);
+    return wrapper;
+}
+
+/**
+ * One 尺寸集: its hand-typed bounds plus its fill mode. The field list comes
+ * from `SIZE_FIELDS`, so a field added to the core shows up here on its own.
  *
  * @param {any} context
- * @param {'inline'|'block'} which
+ * @param {import('../core/size.js').SizeSetKey} sizeSet
  * @param {import('./settings.js').Settings} settings
  * @returns {Element}
  */
-function buildSizeSet(context, which, settings) {
+function buildSizeSet(context, sizeSet, settings) {
     const group = document.createElement('div');
     group.className = 'st-emote-size-set';
 
     const title = document.createElement('div');
     title.className = 'st-emote-size-set-title';
-    title.textContent = SIZE_SET_TITLES[which];
+    title.textContent = SIZE_SET_TITLES[sizeSet];
     group.append(title);
 
     const fields = document.createElement('div');
     fields.className = 'st-emote-size-fields';
     group.append(fields);
 
-    for (const field of ['minWidth', 'minHeight', 'maxWidth', 'maxHeight']) {
+    for (const field of SIZE_FIELDS) {
+        if (field === 'fit') {
+            fields.append(buildFitField(settings.sizes[sizeSet].fit, (fit) => {
+                ensureSettings(context).sizes[sizeSet].fit = fit;
+                saveAndRefresh(context);
+            }));
+            continue;
+        }
         const { wrapper, input, hint } = buildSizeInput(
             SIZE_FIELD_LABELS[field],
-            defaultSizeValue(which, field) || '—',
+            defaultSizeValue(sizeSet, field) || '—',
         );
-        input.value = settings.sizes[which][field];
+        input.value = settings.sizes[sizeSet][field];
         input.addEventListener('change', () => {
             const result = validateSizeValue(input.value);
             // Stored verbatim, valid or not: an unusable value is treated as
             // unset while rendering, and the user keeps what they wrote.
-            ensureSettings(context).sizes[which][field] = input.value;
+            ensureSettings(context).sizes[sizeSet][field] = input.value;
             if (result.ok) {
                 showFieldHint(input, hint, '');
             } else {
                 showFieldHint(input, hint, SIZE_VALUE_HINT);
                 console.info(
-                    `${LOG_PREFIX} ${which} ${field} "${input.value}" is not a size; using the default instead`,
+                    `${LOG_PREFIX} ${sizeSet} ${field} "${input.value}" is not a size; using the default instead`,
                 );
             }
             saveAndRefresh(context);
@@ -374,26 +414,6 @@ function buildSizeSet(context, which, settings) {
         }
         fields.append(wrapper);
     }
-
-    const fitWrapper = document.createElement('label');
-    fitWrapper.className = 'st-emote-field';
-    const fitCaption = document.createElement('span');
-    fitCaption.textContent = SIZE_FIELD_LABELS.fit;
-    const fitSelect = document.createElement('select');
-    fitSelect.className = 'text_pole';
-    fitSelect.append(option('', 'default'));
-    for (const mode of FIT_MODES) {
-        fitSelect.append(option(mode, mode));
-    }
-    fitSelect.value = validateFitMode(settings.sizes[which].fit).ok
-        ? settings.sizes[which].fit
-        : '';
-    fitSelect.addEventListener('change', () => {
-        ensureSettings(context).sizes[which].fit = fitSelect.value;
-        saveAndRefresh(context);
-    });
-    fitWrapper.append(fitCaption, fitSelect);
-    fields.append(fitWrapper);
 
     return group;
 }
@@ -418,8 +438,8 @@ function mountPlacementSection(context, root) {
     });
 
     const sizes = root.querySelector('#st_emote_sizes');
-    for (const which of SIZE_CONTEXTS) {
-        sizes.append(buildSizeSet(context, which, settings));
+    for (const sizeSet of SIZE_SETS) {
+        sizes.append(buildSizeSet(context, sizeSet, settings));
     }
 }
 

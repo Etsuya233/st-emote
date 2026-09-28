@@ -18,6 +18,13 @@ export const PLACEMENTS = ['in-place', 'after-block', 'message-end'];
 export const DEFAULT_PLACEMENT = 'in-place';
 
 /**
+ * The 投放方式 a sticker resolved to. This is the behaviour marker both render
+ * paths and the stylesheet-free logic read; the class list only ever carries
+ * presentation (ADR-0002).
+ */
+export const PLACEMENT_ATTRIBUTE = 'data-st-emote-placement';
+
+/**
  * Set once a sticker has been moved to its 投放方式's position. Relocation is
  * not something that can be re-derived from the DOM (an image that already sits
  * after its block has no block left to point at), so the marker is what keeps a
@@ -26,9 +33,9 @@ export const DEFAULT_PLACEMENT = 'in-place';
 export const PLACED_ATTRIBUTE = 'data-st-emote-placed';
 
 /**
- * Which size set each placement uses.
- *
- * @type {Readonly<Record<string, 'inline'|'block'>>}
+ * Which 尺寸集 each 投放方式 is sized with. The only mapping between the two
+ * vocabularies: `isBlockPlacement` is defined in terms of it, so "is this a
+ * block?" can never drift from "which 尺寸集 does it use?".
  */
 const SIZE_SET_BY_PLACEMENT = {
     'in-place': 'inline',
@@ -98,25 +105,24 @@ export function resolvePlacement(stickerPlacement, globalPlacement) {
 }
 
 /**
- * The size set a placement is sized with.
+ * The 尺寸集 a 投放方式 is sized with.
  *
  * @param {unknown} placement
- * @returns {'inline'|'block'}
+ * @returns {import('./size.js').SizeSetKey}
  */
 export function sizeSetForPlacement(placement) {
     return SIZE_SET_BY_PLACEMENT[resolvePlacement(null, placement)];
 }
 
 /**
- * Whether a placement takes the image out of the text it was written in. Every
- * placement that does is sized with the `block` size set, so the two questions
- * always have the same answer.
+ * Whether a 投放方式 takes the image out of the text it was written in. Defined
+ * as "is this sized with the block 尺寸集" so the two never disagree.
  *
  * @param {unknown} placement
  * @returns {boolean}
  */
 export function isBlockPlacement(placement) {
-    return resolvePlacement(null, placement) !== 'in-place';
+    return sizeSetForPlacement(placement) === 'block';
 }
 
 /**
@@ -124,33 +130,13 @@ export function isBlockPlacement(placement) {
  * table cell has the cell as its block container, but moving an image *after*
  * `</td>` would be invalid markup that browsers foster-parent out of the table
  * entirely. Inside a cell the image therefore goes at the end of the cell's own
- * content, which is still "after the block the token was written in".
+ * content — a deliberate deviation from "after the block", kept because the
+ * literal reading produces a broken table.
  */
 const CELL_TAGS = new Set(['td', 'th']);
 
 /** A CSS selector matching every block container, for the DOM path. */
 export const BLOCK_CONTAINER_SELECTOR = [...BLOCK_CONTAINER_TAGS].join(',');
-
-/**
- * The innermost enclosing block container, or null when the token sits in no
- * block at all (bare text at the top level of a message).
- *
- * `tagNames` is ordered innermost first, which is how a DOM ancestor walk and
- * an HTML tag-stack walk both see it.
- *
- * @param {string[]} tagNames
- * @returns {string|null}
- */
-export function nearestBlockAncestor(tagNames) {
-    const list = Array.isArray(tagNames) ? tagNames : [];
-    for (const raw of list) {
-        const name = String(raw ?? '').toLowerCase();
-        if (BLOCK_CONTAINER_TAGS.has(name)) {
-            return name;
-        }
-    }
-    return null;
-}
 
 /**
  * Where an image goes relative to the block container it was written in.
