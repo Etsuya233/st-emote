@@ -8,5 +8,9 @@
     "author": "Etsuya233",
     "version": "0.1.0",
     "homePage": "https://github.com/Etsuya233/st-emote",
-    "minimum_client_version": "1.15.0"
+    "minimum_client_version": "1.15.0",
+    "hooks": {
+        "enable": "onEnable",
+        "disable": "onDisable"
+    }
 }

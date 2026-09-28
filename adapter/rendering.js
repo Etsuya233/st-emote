@@ -1,5 +1,17 @@
+/**
+ * The DOM render path: SillyTavern 1.15.0–1.18.x, which has no official
+ * message-formatter hook, so tokens are replaced in the already-rendered
+ * message instead.
+ *
+ * Everything here is the DOM half of the contract in ADR-0002. It writes the
+ * final `custom-st-emote` class directly, and it must leave a message in the
+ * state the hook path would have produced — same class, same `data-*`, same
+ * size style — so the two paths are interchangeable and one stylesheet serves
+ * both. `tests/render-paths.test.js` checks that claim against both paths with
+ * one shared assertion.
+ */
+
 import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
-import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import {
     BLOCK_CONTAINER_SELECTOR,
     PLACED_ATTRIBUTE,
@@ -9,15 +21,13 @@ import {
 } from '../core/placement.js';
 import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
 import { parseTokenBody, tokenPrefixes } from '../core/token.js';
-import { ensureSettings } from './settings.js';
 import {
-    getCharacterScopeForAvatar,
-    getChatScope,
-    getCurrentCharacterScope,
-    liveContext,
-} from './scope.js';
-
-export const LOG_PREFIX = '[st-emote]';
+    LOG_PREFIX,
+    effectiveSetForMessage,
+    isInScope,
+    renderOptions,
+    reportResult,
+} from './render-common.js';
 
 /**
  * The tag name the sanitizer must let through. A configured sticker tag is not
@@ -54,41 +64,6 @@ export function allowStickerTag(tagName) {
     });
 }
 
-function describeMiss(miss) {
-    const qualified = miss.packName ? `${miss.packName}:${miss.label}` : miss.label;
-    return `${LOG_PREFIX} sticker not rendered (${miss.reason}): ${qualified}`;
-}
-
-function logMisses(misses) {
-    for (const miss of misses) {
-        console.info(describeMiss(miss));
-    }
-}
-
-/**
- * @param {import('../core/size.js').InvalidSize[]} invalidSizes
- */
-function logInvalidSizes(invalidSizes) {
-    for (const entry of invalidSizes) {
-        console.info(`${LOG_PREFIX} size value ignored, treated as unset: ${entry.field} = "${entry.value}"`);
-    }
-}
-
-/**
- * The placement and size configuration, as plain data for the pure core.
- *
- * @param {any} context
- * @returns {import('../core/render.js').RenderOptions}
- */
-function renderOptions(context) {
-    const settings = ensureSettings(context);
-    return {
-        tagName: settings.stickerTag,
-        placement: settings.placement,
-        sizes: settings.sizes,
-    };
-}
-
 /**
  * @param {Node} node
  * @param {string} html
@@ -97,62 +72,6 @@ function replaceWithHtml(node, html) {
     const template = document.createElement('template');
     template.innerHTML = html;
     node.replaceWith(template.content);
-}
-
-/**
- * The avatar of the character who authored one rendered message. Group chats
- * store the author on the message itself, so each message resolves its own
- * role scope. Single-character messages carry the same field after generation.
- *
- * @param {any} context
- * @param {Element} messageElement
- * @returns {string|null}
- */
-function messageAuthorAvatar(context, messageElement) {
-    const messageId = Number(messageElement.getAttribute('mesid'));
-    const chat = liveContext(context)?.chat;
-    if (!Number.isInteger(messageId) || !Array.isArray(chat)) {
-        return null;
-    }
-    return chat[messageId]?.original_avatar ?? null;
-}
-
-/**
- * Build the effective set for one message: the union of the global scope, the
- * author's character scope and the chat scope.
- *
- * @param {any} context
- * @param {Element} messageElement
- * @returns {import('../core/effective-set.js').EffectiveSet}
- */
-function effectiveSetForMessage(context, messageElement) {
-    const settings = ensureSettings(context);
-    const avatar = messageAuthorAvatar(context, messageElement);
-    return buildScopedEffectiveSet(settings.packs, {
-        global: settings.enabledPackNames,
-        character: avatar
-            ? getCharacterScopeForAvatar(context, avatar)
-            : getCurrentCharacterScope(context),
-        chat: getChatScope(context),
-    });
-}
-
-/**
- * @param {any} context
- * @param {Element} messageElement
- * @returns {boolean}
- */
-function isSkippedMessage(context, messageElement) {
-    const settings = ensureSettings(context);
-    if (messageElement.getAttribute('is_user') === 'true' && !settings.renderUserMessages) {
-        return true;
-    }
-    if (messageElement.getAttribute('is_system') === 'true') {
-        return true;
-    }
-    // Narrator lines stay raw. Reasoning is rendered outside `.mes_text`, so it
-    // is already out of reach.
-    return messageElement.getAttribute('type') === 'narrator';
 }
 
 /**
@@ -194,9 +113,7 @@ function renderStickerElements(textElement, effectiveSet, options) {
         rewritten += 1;
     }
 
-    logMisses(misses);
-    logInvalidSizes(invalidSizes);
-    return rewritten;
+    return reportResult({ misses, invalidSizes }, rewritten);
 }
 
 /**
@@ -235,8 +152,7 @@ function renderTextNodes(textElement, effectiveSet, options) {
     let rewritten = 0;
     for (const node of nodes) {
         const { html, misses, invalidSizes } = renderText(node.data, effectiveSet, options);
-        logMisses(misses);
-        logInvalidSizes(invalidSizes);
+        reportResult({ misses, invalidSizes }, 0);
         if (html === node.data) {
             continue;
         }
@@ -277,10 +193,12 @@ function nearestBlockAncestorElement(image, root) {
  * one lands, and each target keeps a running anchor so images bound for the
  * same place stay in the order they were written.
  *
- * Idempotent: a moved image is marked with `PLACED_ATTRIBUTE` and skipped from
- * then on, which is what keeps re-render, Show more and swipe passes — and the
- * official-hook path, which relocates in the string — from dragging an image
- * that is already home to the end of the message.
+ * Idempotent, and that is load-bearing twice over. A relocated image is marked
+ * with `PLACED_ATTRIBUTE` and skipped from then on, which keeps re-render, Show
+ * more and swipe passes from dragging an image that is already home. It also
+ * means a second pass cannot move an image the *hook* path already placed: the
+ * hook path relocates in the string and marks the image the same way, so even if
+ * both paths were somehow installed, the placement would be applied once.
  *
  * @param {Element} textElement
  * @returns {number} Number of images that were not rendered in place.
@@ -327,16 +245,35 @@ function relocateStickerImages(textElement) {
 }
 
 /**
- * Replace tokens inside one rendered message. Idempotent: once a token is
- * replaced the markup is gone, and a relocated image is marked, so re-running
- * touches nothing.
+ * Whether this client is on the DOM path at all. Set by `installDomRendering`
+ * and consulted by every entry point into the DOM pass, so a caller that is not
+ * path-aware — a settings change, a re-enable — cannot run the DOM pass on a
+ * client whose messages were already rendered by the official hook. Rendering
+ * twice would not corrupt anything (the second pass finds no tokens and skips
+ * placed images), but it would do the walk for nothing, and "the DOM post-
+ * processing does not run on the hook path" is a property worth being able to
+ * state rather than merely observe.
+ */
+let domPathInstalled = false;
+
+/**
+ * Replace tokens inside one rendered message.
+ *
+ * Idempotent in both directions, and the second half is what keeps the extension
+ * safe to turn off. Re-running this touches nothing: the token markup is gone
+ * once replaced, and a relocated image is marked. And every image it inserted
+ * carries the marker it replaced, so `adapter/restore.js` can put the text back
+ * without re-deriving anything from the settings.
  *
  * @param {any} context
  * @param {Element} messageElement
  * @returns {number} Number of places that were rewritten.
  */
 export function renderMessageElement(context, messageElement) {
-    if (!messageElement || isSkippedMessage(context, messageElement)) {
+    if (!domPathInstalled || !messageElement) {
+        return 0;
+    }
+    if (!isInScope(context, messageFactsFromElement(messageElement))) {
         return 0;
     }
 
@@ -345,7 +282,8 @@ export function renderMessageElement(context, messageElement) {
         return 0;
     }
 
-    const effectiveSet = effectiveSetForMessage(context, messageElement);
+    const messageId = Number(messageElement.getAttribute('mesid'));
+    const effectiveSet = effectiveSetForMessage(context, messageId);
     const options = renderOptions(context);
     let rewritten = renderStickerElements(textElement, effectiveSet, options);
     rewritten += renderTextNodes(textElement, effectiveSet, options);
@@ -356,11 +294,29 @@ export function renderMessageElement(context, messageElement) {
 }
 
 /**
+ * The 处理范围 facts the DOM path reads off a message element. The reasoning
+ * chain is rendered outside `.mes_text`, so it is out of reach here by
+ * construction; the flag is still read so both paths present the same facts to
+ * the one rule that decides.
+ *
+ * @param {Element} messageElement
+ * @returns {{isUser: boolean, isSystem: boolean, isNarrator: boolean, isReasoning: boolean}}
+ */
+function messageFactsFromElement(messageElement) {
+    return {
+        isUser: messageElement.getAttribute('is_user') === 'true',
+        isSystem: messageElement.getAttribute('is_system') === 'true',
+        isNarrator: messageElement.getAttribute('type') === 'narrator',
+        isReasoning: messageElement.getAttribute('is_reasoning') === 'true',
+    };
+}
+
+/**
  * @param {any} context
  */
 export function processAllMessages(context) {
     const chatElement = document.getElementById('chat');
-    if (!chatElement) {
+    if (!domPathInstalled || !chatElement) {
         return;
     }
     chatElement.querySelectorAll('.mes').forEach((messageElement) => {
@@ -376,8 +332,8 @@ export function processAllMessages(context) {
  */
 export function rerenderChat(context) {
     const chatElement = document.getElementById('chat');
-    const chat = liveContext(context)?.chat;
-    if (!chatElement || !Array.isArray(chat)) {
+    const chat = context?.chat;
+    if (!domPathInstalled || !chatElement || !Array.isArray(chat)) {
         return;
     }
     chatElement.querySelectorAll('.mes').forEach((messageElement) => {
@@ -396,6 +352,7 @@ export function rerenderChat(context) {
 
 /**
  * @param {any} context
+ * @param {number} messageId
  */
 function renderMessageById(context, messageId) {
     const messageElement = document.querySelector(`.mes[mesid="${messageId}"]`);
@@ -425,16 +382,25 @@ function handleImageError(event) {
 /**
  * Wire the DOM render path into SillyTavern's events.
  *
+ * Every event here re-renders a message that the client has just rebuilt from
+ * its source text, so each pass starts from the original markers. That is what
+ * makes the path idempotent for re-render, Show more, swipe and edit: none of
+ * them can find a token twice, and none of them can leave an image behind,
+ * because the client replaces the message body wholesale before we see it.
+ *
  * @param {any} context
  */
-export function installRendering(context) {
+export function installDomRendering(context) {
     const { eventSource, eventTypes } = context;
-    allowStickerTag(ensureSettings(context).stickerTag);
+    domPathInstalled = true;
 
     eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (messageId) => {
         renderMessageById(context, messageId);
     });
     eventSource.on(eventTypes.MESSAGE_UPDATED, (messageId) => {
+        renderMessageById(context, messageId);
+    });
+    eventSource.on(eventTypes.MESSAGE_EDITED, (messageId) => {
         renderMessageById(context, messageId);
     });
     eventSource.on(eventTypes.MESSAGE_SWIPED, (messageId) => {

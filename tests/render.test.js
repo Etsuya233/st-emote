@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { buildEffectiveSet } from '../core/effective-set.js';
 import { PLACED_ATTRIBUTE, PLACEMENT_ATTRIBUTE } from '../core/placement.js';
 import { STICKER_CLASS, renderHtml, renderText } from '../core/render.js';
+import { messageText, stickerMarkup } from './contract/render-contract.js';
 
 const packs = [
     {
@@ -30,7 +31,8 @@ test('renderHtml replaces a qualified token with an image', () => {
     assert.match(html, /src="user\/images\/st-emote\/happy\.png"/);
     assert.match(html, /data-st-emote-pack="daily"/);
     assert.match(html, /data-st-emote-label="happy"/);
-    assert.doesNotMatch(html, /\[\[sticker:/);
+    // The token is no longer on screen; the image carries it as an attribute.
+    assert.doesNotMatch(messageText(html), /\[\[sticker:/);
 });
 
 test('renderHtml resolves a bare label when one pack is enabled', () => {
@@ -97,7 +99,14 @@ test('tokens inside a pre block are untouched', () => {
 test('tokens after a code block are still rendered', () => {
     const source = '<code>[[sticker:daily:happy]]</code> [[sticker:daily:happy]]';
     const { html } = renderHtml(source, setWith(['daily']));
-    assert.equal(html, `<code>[[sticker:daily:happy]]</code> <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy" style="max-height: 3em; object-fit: contain" data-st-emote-pack="daily" data-st-emote-label="happy" ${PLACEMENT_ATTRIBUTE}="in-place">`);
+    assert.equal(
+        html,
+        `<code>[[sticker:daily:happy]]</code> ${stickerMarkup({
+            src: 'user/images/st-emote/happy.png',
+            pack: 'daily',
+            label: 'happy',
+        })}`,
+    );
 });
 
 test('attribute values are escaped', () => {
@@ -143,7 +152,7 @@ test('renderHtml replaces the raw HTML-tag form', () => {
     const { html, misses } = renderHtml('<p><sticker>daily:happy</sticker></p>', setWith(['daily']));
     assert.equal(misses.length, 0);
     assert.match(html, new RegExp(`<img class="${STICKER_CLASS}"`));
-    assert.doesNotMatch(html, /<sticker>/);
+    assert.doesNotMatch(messageText(html), /<sticker>/);
 });
 
 test('renderHtml replaces the escaped HTML-tag form', () => {
@@ -151,7 +160,7 @@ test('renderHtml replaces the escaped HTML-tag form', () => {
     const { html, misses } = renderHtml(source, setWith(['daily']));
     assert.equal(misses.length, 0);
     assert.match(html, new RegExp(`<img class="${STICKER_CLASS}"`));
-    assert.doesNotMatch(html, /&lt;sticker&gt;/);
+    assert.doesNotMatch(messageText(html), /sticker/);
 });
 
 test('renderHtml honours a custom HTML-tag name', () => {

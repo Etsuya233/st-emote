@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {
     BLOCK_CONTAINER_TAGS,
     DEFAULT_PLACEMENT,
-    PLACED_ATTRIBUTE,
     PLACEMENTS,
     PLACEMENT_ATTRIBUTE,
     blockBoundaryMode,
@@ -21,6 +20,7 @@ import {
     renderHtml,
     stickerClassNames,
 } from '../core/render.js';
+import { stickerMarkup } from './contract/render-contract.js';
 
 const packs = [
     {
@@ -37,13 +37,16 @@ const set = buildEffectiveSet(packs, ['daily']);
 
 /**
  * The `<img …>` a placed sticker is expected to produce, including the marker
- * that says relocation already happened.
+ * that says relocation already happened. The markup itself is the contract's,
+ * not a transcription.
  */
 function blockImage(file, label, placement) {
-    return `<img class="${stickerClassNames(placement)}" src="user/images/st-emote/${file}"`
-        + ` alt="${label}" style="max-width: 100%; object-fit: contain"`
-        + ` data-st-emote-pack="daily" data-st-emote-label="${label}"`
-        + ` ${PLACEMENT_ATTRIBUTE}="${placement}" ${PLACED_ATTRIBUTE}="1">`;
+    return stickerMarkup({
+        src: `user/images/st-emote/${file}`,
+        pack: 'daily',
+        label,
+        placement,
+    });
 }
 
 test('validatePlacement accepts the three placements and empty, rejects the rest', () => {

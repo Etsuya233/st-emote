@@ -1,6 +1,6 @@
 import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import { buildListing } from '../core/listing.js';
-import { LOG_PREFIX } from './rendering.js';
+import { LOG_PREFIX } from './render-common.js';
 import { ensureSettings } from './settings.js';
 import { getChatScope, getCurrentCharacterScope, liveContext } from './scope.js';
 

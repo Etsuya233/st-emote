@@ -9,7 +9,7 @@
 - **名称**：st-emote
 - **形态**：SillyTavern 扩展
 - **一句话**：模型在回复里用标记指名表情，扩展把标记渲染成表情图片。
-- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）与票 04（投放方式与尺寸）已实现，纯核心带测试；后续票据见 `.scratch/st-emote/issues/`。
+- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）、票 04（投放方式与尺寸）与票 05（旧版本兼容路径与产出统一）已实现；后续票据见 `.scratch/st-emote/issues/`。
 
 相关文档：
 
@@ -55,8 +55,15 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 ### 代码布局
 
 - `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值都在这里。
-- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。
-- `tests/`：纯核心测试。
+- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一，`render-common.js` 是两条路径共用的一层。
+- `tests/`：纯核心测试 + 契约测试 + DOM 路径测试。
+
+### 两条渲染路径（ADR-0002）
+
+- ST ≥ 1.19.0：`messageFormatter.addHook`，阶段 `afterMarkdown`，早于净化。发出的类名是**不带前缀**的 `st-emote`，由 ST 净化时补上 `custom-`。
+- ST 1.15.0–1.18.x：DOM 后处理，直接发 `custom-st-emote`。
+- 两者最终落在同一个类名、同一组 `data-*`、同一份 `style.css` 上；`core/render.js` 里 `STICKER_CLASS` 由 `STICKER_HOOK_CLASS` 派生，两边不会漂移。
+- 装哪一条由特性探测决定（`messageFormatter.addHook` 是否存在），**只装一条**。
 
 ### 测试
 
@@ -64,7 +71,10 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 npm test        # node --test，发现并运行 tests/*.test.js
 ```
 
-测试只覆盖纯核心（命中与未命中两类）、不覆盖适配层；适配层在 SillyTavern 里手动验收。
+- 纯核心与契约：`tests/render-contract.test.js`（类名、标记还原、处理范围）、`tests/render-paths.test.js`（两条路径跑同一份期望）。
+- 共享的断言契约在 `tests/contract/render-contract.js`：只断言最终 DOM 的结构、类名、`data-*` 与尺寸样式，不断言实现方式。里面 `applySanitizerClassPrefix` 是**唯一**模拟的客户端行为（净化补 `custom-` 前缀），需要在 1.19+ 上目视核对。
+- DOM 路径与生命周期：`tests/dom-path.test.js`、`tests/hook-path.test.js`、`tests/entry.test.js`，用 `jsdom`（devDependency）+ `tests/contract/st-dom.js` 里的假客户端。`st-dom.js` 只伪造客户的接口面（`getContext`、事件总线、`updateMessageBlock`），DOM 本身是真的。
+- 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性。
 
 ## 待补充
 

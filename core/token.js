@@ -87,6 +87,31 @@ function findCandidates(source, tagName) {
 }
 
 /**
+ * The marker text a token stands for, rebuilt from its parsed parts.
+ *
+ * Used to put the original marker back where a rendered image was, so disabling
+ * the extension restores what the user can see and edit. Which of the two forms
+ * is rebuilt is taken from the token's own raw text, so a message written with
+ * the HTML-tag form comes back as the HTML-tag form.
+ *
+ * The body is the parsed, trimmed `pack:label`, never the raw match: the raw
+ * text of the escaped form is entity-encoded, and writing that back would show
+ * the user `&lt;sticker&gt;` instead of `<sticker>`.
+ *
+ * @param {Token} token
+ * @param {{tagName?: string}} [options]
+ * @returns {string}
+ */
+export function tokenText(token, options = {}) {
+    const body = token.packName ? `${token.packName}:${token.label}` : token.label;
+    if (!/^(?:&lt;|<)/i.test(String(token.raw ?? '').trimStart())) {
+        return `[[sticker:${body}]]`;
+    }
+    const tag = resolveTagName(options.tagName);
+    return `<${tag}>${body}</${tag}>`;
+}
+
+/**
  * Find every token occurrence in a plain text string, in source order. Tokens
  * with an empty label are ignored and left untouched.
  *

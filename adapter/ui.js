@@ -17,7 +17,8 @@ import {
     validateFitMode,
     validateSizeValue,
 } from '../core/size.js';
-import { allowStickerTag, LOG_PREFIX, rerenderChat } from './rendering.js';
+import { allowStickerTag, rerenderChat } from './rendering.js';
+import { LOG_PREFIX } from './render-common.js';
 import { clearContextRegexJson } from './regex.js';
 import {
     collectCharacterPackNames,

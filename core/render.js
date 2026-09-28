@@ -9,20 +9,53 @@ import {
     sizeSetForPlacement,
 } from './placement.js';
 import { evaluateSize } from './size.js';
-import { findTokens } from './token.js';
+import { findTokens, tokenText } from './token.js';
 
 /**
- * Class emitted by the DOM path, which writes it directly. This is the *final*
- * class name; the official-hook path (ticket 05) must emit the un-prefixed
- * `st-emote` and let SillyTavern's sanitizer add the `custom-` prefix, so the
- * two paths converge on this one name and one stylesheet.
+ * The class name the official message-formatter hook writes, before
+ * SillyTavern's sanitizer has had its way with it.
  *
- * Every sticker image carries it, whatever its 投放方式, because both render
- * paths select on it. Whether an image was placed in place or moved is a
+ * Every sticker image carries this class, whatever its 投放方式, because both
+ * render paths select on it. Whether an image was placed in place or moved is a
  * behaviour question, and behaviour is carried by `data-*` (ADR-0002), never by
  * the class list.
  */
-export const STICKER_CLASS = 'custom-st-emote';
+export const STICKER_HOOK_CLASS = 'st-emote';
+
+/**
+ * The prefix SillyTavern's sanitizer puts in front of every class in message
+ * content. The hook path gets it for free; the DOM path has to add it itself.
+ */
+export const SANITIZER_CLASS_PREFIX = 'custom-';
+
+/**
+ * The class as it exists in the final DOM, which is what the stylesheet targets
+ * and what both paths converge on (ADR-0002). It is derived from
+ * `STICKER_HOOK_CLASS` so the two names cannot drift apart: the DOM path writes
+ * the prefixed name directly, the hook path writes the bare name and lets the
+ * sanitizer produce the same one.
+ */
+export const STICKER_CLASS = `${SANITIZER_CLASS_PREFIX}${STICKER_HOOK_CLASS}`;
+
+/**
+ * The marker text the image stands for, recorded verbatim so disabling the
+ * extension can put it back where the image was. Both paths emit it, so the
+ * restore works the same way whichever one rendered the image.
+ */
+export const TOKEN_ATTRIBUTE = 'data-st-emote-token';
+
+/**
+ * Whether the running SillyTavern offers the official message-formatter hook.
+ * Feature detection rather than a version check: the hook is the only thing this
+ * extension needs from that API, and a client that has it is one the hook path
+ * can use. Everything else — 净化, 事件 — works on every version from 1.15.0 up.
+ *
+ * @param {unknown} messageFormatter - The `messageFormatter` from the context.
+ * @returns {boolean}
+ */
+export function supportsMessageFormatter(messageFormatter) {
+    return Boolean(messageFormatter) && typeof messageFormatter.addHook === 'function';
+}
 
 /**
  * Modifier class added alongside `STICKER_CLASS` to a sticker that owns its own
@@ -99,7 +132,7 @@ function resolveToken(token, effectiveSet, misses) {
     return result;
 }
 
-function stickerHtml(pack, sticker, options, invalidSizes) {
+function stickerHtml(pack, sticker, options, invalidSizes, marker) {
     const placement = resolvePlacement(sticker.placement, options.placement);
     const size = evaluateSize(sizeSetForPlacement(placement), options.sizes);
     invalidSizes.push(...size.invalid);
@@ -109,6 +142,7 @@ function stickerHtml(pack, sticker, options, invalidSizes) {
         + ` style="${escapeAttribute(size.style)}"`
         + ` data-st-emote-pack="${escapeAttribute(pack.name)}"`
         + ` data-st-emote-label="${escapeAttribute(sticker.label)}"`
+        + ` ${TOKEN_ATTRIBUTE}="${escapeAttribute(marker)}"`
         + ` ${PLACEMENT_ATTRIBUTE}="${placement}">`;
 }
 
@@ -128,7 +162,16 @@ function stickerHtml(pack, sticker, options, invalidSizes) {
  */
 export function renderTokenHtml(token, effectiveSet, misses, options = {}, invalidSizes = []) {
     const result = resolveToken(token, effectiveSet, misses);
-    return result ? stickerHtml(result.pack, result.sticker, options, invalidSizes) : '';
+    if (!result) {
+        return '';
+    }
+    return stickerHtml(
+        result.pack,
+        result.sticker,
+        options,
+        invalidSizes,
+        tokenText(token, options),
+    );
 }
 
 /**

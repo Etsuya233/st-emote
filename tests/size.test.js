@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildEffectiveSet } from '../core/effective-set.js';
-import { PLACEMENT_ATTRIBUTE } from '../core/placement.js';
-import { STICKER_CLASS, renderHtml, renderText } from '../core/render.js';
+import { renderHtml, renderText } from '../core/render.js';
 import {
     SIZE_FIELDS,
     SIZE_SETS,
@@ -15,6 +14,7 @@ import {
     validateFitMode,
     validateSizeValue,
 } from '../core/size.js';
+import { stickerMarkup } from './contract/render-contract.js';
 
 const packs = [
     {
@@ -154,9 +154,12 @@ test('the rendered image carries the evaluated size and the in-place class', () 
     });
     assert.equal(
         html,
-        `a <img class="${STICKER_CLASS}" src="user/images/st-emote/happy.png" alt="happy"`
-        + ' style="max-height: 2.5em; object-fit: cover" data-st-emote-pack="daily"'
-        + ' data-st-emote-label="happy" ' + PLACEMENT_ATTRIBUTE + '="in-place"> b',
+        `a ${stickerMarkup({
+            src: 'user/images/st-emote/happy.png',
+            pack: 'daily',
+            label: 'happy',
+            style: 'max-height: 2.5em; object-fit: cover',
+        })} b`,
     );
 });
 
