@@ -27,6 +27,23 @@
     flex: 1;
 }
 
+.st-emote-options {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.st-emote-option {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.st-emote-option .text_pole {
+    width: 10em;
+}
+
 .st-emote-pack {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
@@ -43,6 +60,7 @@
 
 .st-emote-pack-name {
     flex: 1;
+    min-width: 0;
 }
 
 .st-emote-pack-count {
@@ -91,6 +109,16 @@
 .st-emote-description {
     flex: 2;
     min-width: 0;
+}
+
+.st-emote-badge {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 3px;
+    font-size: 0.8em;
+    opacity: 0.8;
+    white-space: nowrap;
 }
 
 .st-emote-empty {

@@ -10,6 +10,7 @@ const packs = [
             { label: 'happy', image: 'user/images/st-emote/a.png' },
             { label: 'Sad Face', image: 'user/images/st-emote/b.png' },
             { label: '', image: 'user/images/st-emote/c.png' },
+            { label: '   ', image: 'user/images/st-emote/e.png' },
         ],
     },
     {
@@ -55,6 +56,13 @@ test('an unknown label is a miss', () => {
 test('a sticker without a label never matches', () => {
     const set = buildEffectiveSet(packs, ['daily']);
     assert.deepEqual(set.lookup('daily', ''), { hit: false, reason: 'label-not-found' });
+    assert.deepEqual(set.lookup('daily', '   '), { hit: false, reason: 'label-not-found' });
+});
+
+test('a sticker without a label is not part of the effective set', () => {
+    const set = buildEffectiveSet(packs, ['daily']);
+    const labels = set.packs[0].stickers.map((sticker) => sticker.label);
+    assert.deepEqual(labels, ['happy', 'Sad Face']);
 });
 
 test('a bare label resolves when exactly one pack is enabled', () => {

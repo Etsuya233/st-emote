@@ -30,7 +30,10 @@ import { normalizeLabel, normalizePackName } from './normalize.js';
 
 /**
  * @typedef {Object} EffectiveSet
- * @property {Pack[]} packs - The enabled packs, in enabled order.
+ * @property {Pack[]} packs - The enabled packs, in enabled order. Each pack
+ *   carries only its labeled stickers: an unlabeled sticker cannot be named by
+ *   a token, so it is not part of the usable set and never appears in a
+ *   listing.
  * @property {(packName: string|null, label: string) => LookupHit|LookupMiss} lookup
  */
 
@@ -66,9 +69,17 @@ export function buildEffectiveSet(packs, enabledPackNames) {
         seen.add(key);
         const pack = packsByName.get(key);
         if (pack) {
-            enabled.push(pack);
+            enabled.push({
+                ...pack,
+                stickers: (Array.isArray(pack.stickers) ? pack.stickers : [])
+                    .filter((sticker) => sticker && normalizeLabel(sticker.label)),
+            });
         }
     }
+
+    const enabledByName = new Map(
+        enabled.map((pack) => [normalizePackName(pack.name), pack]),
+    );
 
     return {
         packs: enabled,
@@ -88,14 +99,14 @@ export function buildEffectiveSet(packs, enabledPackNames) {
                 }
                 pack = enabled[0];
             } else {
-                const known = packsByName.get(normalizePackName(packName));
-                if (!known) {
-                    return { hit: false, reason: 'pack-not-found' };
+                const key = normalizePackName(packName);
+                pack = enabledByName.get(key);
+                if (!pack) {
+                    return {
+                        hit: false,
+                        reason: packsByName.has(key) ? 'pack-not-enabled' : 'pack-not-found',
+                    };
                 }
-                if (!enabled.includes(known)) {
-                    return { hit: false, reason: 'pack-not-enabled' };
-                }
-                pack = known;
             }
 
             const stickers = Array.isArray(pack.stickers) ? pack.stickers : [];

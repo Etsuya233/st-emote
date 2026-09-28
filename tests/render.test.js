@@ -48,6 +48,12 @@ test('renderHtml inserts the image once per occurrence', () => {
     assert.equal(html.match(/<img /g).length, 2);
 });
 
+test('renderHtml inserts one image per repeated HTML-tag token', () => {
+    const source = '<sticker>daily:happy</sticker><sticker>daily:happy</sticker>';
+    const { html } = renderHtml(source, setWith(['daily']));
+    assert.equal(html.match(/<img /g).length, 2);
+});
+
 test('an unknown label disappears and is reported', () => {
     const { html, misses } = renderHtml('<p>a [[sticker:daily:angry]] b</p>', setWith(['daily']));
     assert.equal(html, '<p>a  b</p>');
@@ -130,6 +136,66 @@ test('renderText removes a missed token', () => {
     const { html, misses } = renderText('x [[sticker:nope]] y', setWith(['daily']));
     assert.equal(html, 'x  y');
     assert.equal(misses.length, 1);
+});
+
+test('renderHtml replaces the raw HTML-tag form', () => {
+    const { html, misses } = renderHtml('<p><sticker>daily:happy</sticker></p>', setWith(['daily']));
+    assert.equal(misses.length, 0);
+    assert.match(html, new RegExp(`<img class="${STICKER_CLASS}"`));
+    assert.doesNotMatch(html, /<sticker>/);
+});
+
+test('renderHtml replaces the escaped HTML-tag form', () => {
+    const source = '<p>&lt;sticker&gt;daily:happy&lt;/sticker&gt;</p>';
+    const { html, misses } = renderHtml(source, setWith(['daily']));
+    assert.equal(misses.length, 0);
+    assert.match(html, new RegExp(`<img class="${STICKER_CLASS}"`));
+    assert.doesNotMatch(html, /&lt;sticker&gt;/);
+});
+
+test('renderHtml honours a custom HTML-tag name', () => {
+    const options = { tagName: 'my-sticker' };
+    const { html } = renderHtml('<my-sticker>daily:happy</my-sticker>', setWith(['daily']), options);
+    assert.match(html, /<img /);
+    assert.equal(renderHtml('<sticker>daily:happy</sticker>', setWith(['daily']), options).html, '<sticker>daily:happy</sticker>');
+});
+
+test('renderHtml leaves a non-configured tag alone', () => {
+    const source = '<p>a <figure>daily:happy</figure> b</p>';
+    const { html, misses } = renderHtml(source, setWith(['daily']));
+    assert.equal(html, source);
+    assert.equal(misses.length, 0);
+});
+
+test('renderHtml leaves HTML-tag tokens inside code untouched', () => {
+    const source = '<p><code><sticker>daily:happy</sticker></code></p>';
+    const { html, misses } = renderHtml(source, setWith(['daily']));
+    assert.equal(html, source);
+    assert.equal(misses.length, 0);
+});
+
+test('renderHtml leaves code-spanning raw tags and still renders after', () => {
+    const source = '<code>&lt;sticker&gt;daily:happy&lt;/sticker&gt;</code> <sticker>daily:happy</sticker>';
+    const { html } = renderHtml(source, setWith(['daily']));
+    assert.match(html, /^<code>&lt;sticker&gt;daily:happy&lt;\/sticker&gt;<\/code> <img /);
+});
+
+test('renderText replaces the HTML-tag form and escapes the rest', () => {
+    const { html, misses } = renderText('a & b <sticker>happy</sticker> c', setWith(['daily']));
+    assert.equal(misses.length, 0);
+    assert.equal(html.startsWith('a &amp; b <img'), true);
+    assert.equal(html.endsWith(' c'), true);
+});
+
+test('renderText honours a custom HTML-tag name', () => {
+    const { html } = renderText('<x-sticker>happy</x-sticker>', setWith(['daily']), { tagName: 'x-sticker' });
+    assert.match(html, /^<img /);
+});
+
+test('renderText keeps a missed HTML-tag token removed', () => {
+    const { html, misses } = renderText('x <sticker>angry</sticker> y', setWith(['daily']));
+    assert.equal(html, 'x  y');
+    assert.equal(misses[0].reason, 'label-not-found');
 });
 
 test('renders tokens in realistic showdown output', () => {

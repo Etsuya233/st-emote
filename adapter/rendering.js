@@ -1,12 +1,65 @@
+import { validateStickerTag } from '../core/constraints.js';
 import { buildEffectiveSet } from '../core/effective-set.js';
-import { STICKER_CLASS, renderText } from '../core/render.js';
+import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
+import { parseTokenBody, tokenPrefixes } from '../core/token.js';
 import { ensureSettings } from './settings.js';
 
 export const LOG_PREFIX = '[st-emote]';
 
+/**
+ * The tag name the sanitizer must let through. A configured sticker tag is not
+ * a real HTML element, so without this SillyTavern's DOMPurify pass would strip
+ * the raw `<sticker>…</sticker>` form before the DOM path can see it.
+ */
+let activeStickerTag = '';
+let purifierHookInstalled = false;
+
+/**
+ * Let the configured HTML-tag form survive message sanitization. Safe to call
+ * repeatedly; the hook itself is registered once.
+ *
+ * @param {unknown} tagName
+ */
+export function allowStickerTag(tagName) {
+    const result = validateStickerTag(tagName);
+    if (!result.ok) {
+        return;
+    }
+    activeStickerTag = result.value.toLowerCase();
+    if (purifierHookInstalled) {
+        return;
+    }
+    const purifier = globalThis.DOMPurify;
+    if (!purifier || typeof purifier.addHook !== 'function') {
+        return;
+    }
+    purifierHookInstalled = true;
+    purifier.addHook('uponSanitizeElement', (node, data) => {
+        if (activeStickerTag && String(data?.tagName ?? '').toLowerCase() === activeStickerTag) {
+            data.allowedTags[activeStickerTag] = true;
+        }
+    });
+}
+
 function describeMiss(miss) {
     const qualified = miss.packName ? `${miss.packName}:${miss.label}` : miss.label;
     return `${LOG_PREFIX} sticker not rendered (${miss.reason}): ${qualified}`;
+}
+
+function logMisses(misses) {
+    for (const miss of misses) {
+        console.info(describeMiss(miss));
+    }
+}
+
+/**
+ * @param {Node} node
+ * @param {string} html
+ */
+function replaceWithHtml(node, html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    node.replaceWith(template.content);
 }
 
 /**
@@ -21,11 +74,13 @@ function buildResolver(context) {
 }
 
 /**
+ * @param {any} context
  * @param {Element} messageElement
  * @returns {boolean}
  */
-function isSkippedMessage(messageElement) {
-    if (messageElement.getAttribute('is_user') === 'true') {
+function isSkippedMessage(context, messageElement) {
+    const settings = ensureSettings(context);
+    if (messageElement.getAttribute('is_user') === 'true' && !settings.renderUserMessages) {
         return true;
     }
     if (messageElement.getAttribute('is_system') === 'true') {
@@ -37,27 +92,59 @@ function isSkippedMessage(messageElement) {
 }
 
 /**
- * Replace tokens inside one rendered message. Idempotent: once a token is
- * replaced the text is gone, so re-running touches nothing.
+ * Replace raw `<tag>pack:label</tag>` elements. This form only reaches the DOM
+ * when SillyTavern is configured not to encode tags; the entity-escaped form
+ * arrives as ordinary text and is handled by the text-node pass below.
  *
- * @param {any} context
- * @param {Element} messageElement
- * @returns {number} Number of text nodes that were rewritten.
+ * @param {Element} textElement
+ * @param {import('../core/effective-set.js').EffectiveSet} effectiveSet
+ * @param {string} tagName
+ * @returns {number}
  */
-export function renderMessageElement(context, messageElement) {
-    if (!messageElement || isSkippedMessage(messageElement)) {
-        return 0;
+function renderStickerElements(textElement, effectiveSet, tagName) {
+    const elements = textElement.querySelectorAll(tagName);
+    const misses = [];
+    let rewritten = 0;
+
+    for (const element of elements) {
+        if (element.closest('code, pre')) {
+            continue;
+        }
+        const parsed = parseTokenBody(element.textContent ?? '');
+        if (!parsed.label) {
+            continue;
+        }
+        const html = renderTokenHtml(
+            { raw: element.outerHTML, packName: parsed.packName, label: parsed.label },
+            effectiveSet,
+            misses,
+        );
+        if (!html) {
+            element.remove();
+            continue;
+        }
+        replaceWithHtml(element, html);
+        rewritten += 1;
     }
 
-    const textElement = messageElement.querySelector('.mes_text');
-    if (!textElement) {
-        return 0;
-    }
+    logMisses(misses);
+    return rewritten;
+}
 
-    const effectiveSet = buildResolver(context);
+/**
+ * Replace tokens inside the text nodes of a rendered message.
+ *
+ * @param {Element} textElement
+ * @param {import('../core/effective-set.js').EffectiveSet} effectiveSet
+ * @param {string} tagName
+ * @returns {number}
+ */
+function renderTextNodes(textElement, effectiveSet, tagName) {
+    const hints = tokenPrefixes(tagName).map((prefix) => prefix.toLowerCase());
     const walker = document.createTreeWalker(textElement, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-            if (!node.data || node.data.indexOf('[[sticker:') === -1) {
+            const lower = (node.data ?? '').toLowerCase();
+            if (!hints.some((hint) => lower.includes(hint))) {
                 return NodeFilter.FILTER_REJECT;
             }
             let parent = node.parentElement;
@@ -79,18 +166,39 @@ export function renderMessageElement(context, messageElement) {
 
     let rewritten = 0;
     for (const node of nodes) {
-        const { html, misses } = renderText(node.data, effectiveSet);
-        for (const miss of misses) {
-            console.info(describeMiss(miss));
-        }
+        const { html, misses } = renderText(node.data, effectiveSet, { tagName });
+        logMisses(misses);
         if (html === node.data) {
             continue;
         }
-        const template = document.createElement('template');
-        template.innerHTML = html;
-        node.replaceWith(template.content);
+        replaceWithHtml(node, html);
         rewritten += 1;
     }
+    return rewritten;
+}
+
+/**
+ * Replace tokens inside one rendered message. Idempotent: once a token is
+ * replaced the markup is gone, so re-running touches nothing.
+ *
+ * @param {any} context
+ * @param {Element} messageElement
+ * @returns {number} Number of places that were rewritten.
+ */
+export function renderMessageElement(context, messageElement) {
+    if (!messageElement || isSkippedMessage(context, messageElement)) {
+        return 0;
+    }
+
+    const textElement = messageElement.querySelector('.mes_text');
+    if (!textElement) {
+        return 0;
+    }
+
+    const effectiveSet = buildResolver(context);
+    const tagName = ensureSettings(context).stickerTag;
+    let rewritten = renderStickerElements(textElement, effectiveSet, tagName);
+    rewritten += renderTextNodes(textElement, effectiveSet, tagName);
     return rewritten;
 }
 
@@ -164,6 +272,7 @@ function handleImageError(event) {
  */
 export function installRendering(context) {
     const { eventSource, eventTypes } = context;
+    allowStickerTag(ensureSettings(context).stickerTag);
 
     eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (messageId) => {
         renderMessageById(context, messageId);

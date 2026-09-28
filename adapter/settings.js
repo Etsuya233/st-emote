@@ -1,3 +1,4 @@
+import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
 import { normalizePackName } from '../core/normalize.js';
 
 /** Key under `extension_settings` that holds this extension's data. */
@@ -27,6 +28,8 @@ const SCHEMA_VERSION = 1;
  * @property {number} version
  * @property {PackRecord[]} packs
  * @property {string[]} enabledPackNames - Global scope.
+ * @property {string} stickerTag - Name of the HTML-tag token form.
+ * @property {boolean} renderUserMessages - Render tokens in user messages too.
  */
 
 /**
@@ -38,7 +41,13 @@ const SCHEMA_VERSION = 1;
 export function ensureSettings(context) {
     const store = context.extensionSettings;
     if (!store[STORAGE_KEY] || typeof store[STORAGE_KEY] !== 'object') {
-        store[STORAGE_KEY] = { version: SCHEMA_VERSION, packs: [], enabledPackNames: [] };
+        store[STORAGE_KEY] = {
+            version: SCHEMA_VERSION,
+            packs: [],
+            enabledPackNames: [],
+            stickerTag: DEFAULT_STICKER_TAG,
+            renderUserMessages: false,
+        };
     }
     const settings = store[STORAGE_KEY];
     if (!Array.isArray(settings.packs)) {
@@ -47,6 +56,10 @@ export function ensureSettings(context) {
     if (!Array.isArray(settings.enabledPackNames)) {
         settings.enabledPackNames = [];
     }
+    if (!validateStickerTag(settings.stickerTag).ok) {
+        settings.stickerTag = DEFAULT_STICKER_TAG;
+    }
+    settings.renderUserMessages = settings.renderUserMessages === true;
     for (const pack of settings.packs) {
         if (!pack || typeof pack !== 'object') {
             continue;
@@ -61,22 +74,26 @@ export function ensureSettings(context) {
 /**
  * @param {Settings} settings
  * @param {string} name
- * @returns {PackRecord|null}
- */
-export function findPack(settings, name) {
-    const key = normalizePackName(name);
-    return settings.packs.find((pack) => normalizePackName(pack.name) === key) ?? null;
-}
-
-/**
- * @param {Settings} settings
- * @param {string} name
  * @returns {PackRecord}
  */
 export function createPack(settings, name) {
     const pack = { name: String(name).trim(), stickers: [] };
     settings.packs.push(pack);
     return pack;
+}
+
+/**
+ * Remap a pack's enabled reference when it is renamed.
+ *
+ * @param {Settings} settings
+ * @param {PackRecord} pack
+ * @param {string} newName
+ */
+export function renamePack(settings, pack, newName) {
+    const oldKey = normalizePackName(pack.name);
+    pack.name = newName;
+    settings.enabledPackNames = settings.enabledPackNames
+        .map((name) => (normalizePackName(name) === oldKey ? newName : name));
 }
 
 /**

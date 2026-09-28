@@ -1,15 +1,81 @@
-import { LOG_PREFIX, rerenderChat } from './rendering.js';
+import {
+    findPackByName,
+    findStickerByLabel,
+    validateDescription,
+    validateLabel,
+    validatePackName,
+    validateStickerTag,
+} from '../core/constraints.js';
+import { normalizeLabel } from '../core/normalize.js';
+import { allowStickerTag, LOG_PREFIX, rerenderChat } from './rendering.js';
 import {
     createPack,
     createSticker,
     ensureSettings,
-    findPack,
     isPackEnabled,
+    renamePack,
     setPackEnabled,
 } from './settings.js';
 import { uploadStickerImage } from './upload.js';
 
 const ACCEPTED_MIME = 'image/png,image/jpeg,image/webp,image/gif';
+
+const CONSTRAINT_REASONS = {
+    empty: 'cannot be empty',
+    'too-long': 'is too long',
+    'forbidden-character': 'cannot contain [ ] < or >',
+    newline: 'must stay on a single line',
+    colon: 'cannot contain ":"',
+    invalid: 'must start with a letter and use only letters, digits and "-"',
+    reserved: 'is a real HTML tag name',
+};
+
+/**
+ * @param {string} field
+ * @param {string} reason
+ * @returns {string}
+ */
+function constraintMessage(field, reason) {
+    return `${field} ${CONSTRAINT_REASONS[reason] ?? 'is invalid'}.`;
+}
+
+/**
+ * Validate a new pack name and its app-wide uniqueness.
+ *
+ * @param {import('./settings.js').Settings} settings
+ * @param {unknown} value
+ * @param {object} [except]
+ * @returns {{ok: true, value: string} | {ok: false, message: string}}
+ */
+function checkPackName(settings, value, except) {
+    const result = validatePackName(value);
+    if (!result.ok) {
+        return { ok: false, message: constraintMessage('Pack name', result.reason) };
+    }
+    if (findPackByName(settings.packs, result.value, { except })) {
+        return { ok: false, message: `A pack named "${result.value}" already exists.` };
+    }
+    return { ok: true, value: result.value };
+}
+
+/**
+ * Validate a label and its uniqueness inside one pack.
+ *
+ * @param {import('./settings.js').PackRecord} pack
+ * @param {unknown} value
+ * @param {object} [except]
+ * @returns {{ok: true, value: string} | {ok: false, message: string}}
+ */
+function checkLabel(pack, value, except) {
+    const result = validateLabel(value);
+    if (!result.ok) {
+        return { ok: false, message: constraintMessage('Label', result.reason) };
+    }
+    if (findStickerByLabel(pack.stickers, result.value, { except })) {
+        return { ok: false, message: `This pack already has a sticker labelled "${result.value}".` };
+    }
+    return { ok: true, value: result.value };
+}
 
 /**
  * @param {'success'|'warning'|'error'} kind
@@ -56,6 +122,14 @@ export function mountSettingsPanel(context) {
         'Upload images into a pack and give each sticker a label. ',
         'Enable a pack globally to render <code>[[sticker:pack:label]]</code> in AI replies.',
         '</div>',
+        '<div class="st-emote-options">',
+        '<label class="st-emote-option">',
+        '<input type="checkbox" id="st_emote_render_user"> Render stickers in user messages',
+        '</label>',
+        '<label class="st-emote-option">',
+        'HTML tag form: <input type="text" class="text_pole" id="st_emote_tag_name">',
+        '</label>',
+        '</div>',
         '<div class="st-emote-create">',
         '<input type="text" class="text_pole" id="st_emote_new_pack" placeholder="New pack name">',
         '<div class="menu_button" id="st_emote_create_pack">Create pack</div>',
@@ -65,23 +139,42 @@ export function mountSettingsPanel(context) {
     ].join('');
     container.append(root);
 
+    const settings = ensureSettings(context);
     const packContainer = root.querySelector('#st_emote_packs');
     const refresh = () => renderPackList(context, packContainer, refresh);
+
+    const tagInput = root.querySelector('#st_emote_tag_name');
+    tagInput.value = settings.stickerTag;
+    tagInput.addEventListener('change', () => {
+        const result = validateStickerTag(tagInput.value);
+        if (!result.ok) {
+            toast('warning', constraintMessage('HTML tag name', result.reason));
+            tagInput.value = ensureSettings(context).stickerTag;
+            return;
+        }
+        const current = ensureSettings(context);
+        current.stickerTag = result.value;
+        allowStickerTag(result.value);
+        saveAndRefresh(context);
+    });
+
+    const renderUserCheckbox = root.querySelector('#st_emote_render_user');
+    renderUserCheckbox.checked = settings.renderUserMessages;
+    renderUserCheckbox.addEventListener('change', () => {
+        ensureSettings(context).renderUserMessages = renderUserCheckbox.checked;
+        saveAndRefresh(context);
+    });
 
     const nameInput = root.querySelector('#st_emote_new_pack');
     const createButton = root.querySelector('#st_emote_create_pack');
     createButton.addEventListener('click', () => {
-        const settings = ensureSettings(context);
-        const name = String(nameInput.value ?? '').trim();
-        if (!name) {
-            toast('warning', 'Enter a pack name first.');
+        const current = ensureSettings(context);
+        const check = checkPackName(current, nameInput.value);
+        if (!check.ok) {
+            toast('warning', check.message);
             return;
         }
-        if (findPack(settings, name)) {
-            toast('warning', `A pack named "${name}" already exists.`);
-            return;
-        }
-        createPack(settings, name);
+        createPack(current, check.value);
         context.saveSettingsDebounced();
         nameInput.value = '';
         refresh();
@@ -138,9 +231,23 @@ function buildPackElement(context, pack, refresh) {
     enableLabel.append(enableCheckbox, document.createTextNode(' Enabled (global)'));
     header.append(enableLabel);
 
-    const name = document.createElement('b');
-    name.className = 'st-emote-pack-name';
-    name.textContent = pack.name;
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'text_pole st-emote-pack-name';
+    name.value = pack.name;
+    name.addEventListener('change', () => {
+        const current = ensureSettings(context);
+        const check = checkPackName(current, name.value, pack);
+        if (!check.ok) {
+            toast('warning', check.message);
+            name.value = pack.name;
+            return;
+        }
+        renamePack(current, pack, check.value);
+        saveAndRefresh(context);
+        toast('warning', `Renamed to "${check.value}". Tokens using the old name no longer match.`);
+        refresh();
+    });
     header.append(name);
 
     const count = document.createElement('span');
@@ -171,7 +278,7 @@ function buildPackElement(context, pack, refresh) {
     const stickers = document.createElement('div');
     stickers.className = 'st-emote-stickers';
     for (const sticker of pack.stickers) {
-        stickers.append(buildStickerElement(context, sticker));
+        stickers.append(buildStickerElement(context, pack, sticker, refresh));
     }
     wrapper.append(stickers);
 
@@ -180,10 +287,12 @@ function buildPackElement(context, pack, refresh) {
 
 /**
  * @param {any} context
+ * @param {import('./settings.js').PackRecord} pack
  * @param {import('./settings.js').StickerRecord} sticker
+ * @param {() => void} refresh
  * @returns {Element}
  */
-function buildStickerElement(context, sticker) {
+function buildStickerElement(context, pack, sticker, refresh) {
     const row = document.createElement('div');
     row.className = 'st-emote-sticker';
 
@@ -203,18 +312,38 @@ function buildStickerElement(context, sticker) {
     labelInput.placeholder = 'Label';
     labelInput.value = sticker.label;
     labelInput.addEventListener('change', () => {
-        sticker.label = labelInput.value;
+        const check = checkLabel(pack, labelInput.value, sticker);
+        if (!check.ok) {
+            toast('warning', check.message);
+            labelInput.value = sticker.label;
+            return;
+        }
+        sticker.label = check.value;
         saveAndRefresh(context);
+        refresh();
     });
     row.append(labelInput);
+
+    if (!normalizeLabel(sticker.label)) {
+        const badge = document.createElement('span');
+        badge.className = 'st-emote-badge';
+        badge.textContent = '待填标签';
+        row.append(badge);
+    }
 
     const descriptionInput = document.createElement('input');
     descriptionInput.type = 'text';
     descriptionInput.className = 'text_pole st-emote-description';
-    descriptionInput.placeholder = 'Description';
+    descriptionInput.placeholder = '—';
     descriptionInput.value = sticker.description ?? '';
     descriptionInput.addEventListener('change', () => {
-        sticker.description = descriptionInput.value;
+        const result = validateDescription(descriptionInput.value);
+        if (!result.ok) {
+            toast('warning', constraintMessage('Description', result.reason));
+            descriptionInput.value = sticker.description ?? '';
+            return;
+        }
+        sticker.description = result.value;
         context.saveSettingsDebounced();
     });
     row.append(descriptionInput);
