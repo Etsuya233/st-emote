@@ -6,8 +6,19 @@ import {
     validatePackName,
     validateStickerTag,
 } from '../core/constraints.js';
+import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
 import { normalizeLabel } from '../core/normalize.js';
 import { allowStickerTag, LOG_PREFIX, rerenderChat } from './rendering.js';
+import { clearContextRegexJson } from './regex.js';
+import {
+    collectCharacterPackNames,
+    getChatScope,
+    getCurrentCharacter,
+    getCurrentCharacterScope,
+    missingPackNames,
+    setChatScope,
+    setCurrentCharacterScope,
+} from './scope.js';
 import {
     createPack,
     createSticker,
@@ -120,7 +131,8 @@ export function mountSettingsPanel(context) {
         '<div class="inline-drawer-content">',
         '<div class="st-emote-hint">',
         'Upload images into a pack and give each sticker a label. ',
-        'Enable a pack globally to render <code>[[sticker:pack:label]]</code> in AI replies.',
+        'Enable a pack globally, per character or per chat to render ',
+        '<code>[[sticker:pack:label]]</code> in AI replies.',
         '</div>',
         '<div class="st-emote-options">',
         '<label class="st-emote-option">',
@@ -134,6 +146,19 @@ export function mountSettingsPanel(context) {
         '<input type="text" class="text_pole" id="st_emote_new_pack" placeholder="New pack name">',
         '<div class="menu_button" id="st_emote_create_pack">Create pack</div>',
         '</div>',
+        '<div id="st_emote_missing" class="st-emote-missing"></div>',
+        '<div class="st-emote-hint">',
+        'Write one of these in your own preset to get the sticker listing:',
+        '</div>',
+        '<pre class="st-emote-code">{{st-emote}}       one "pack:label" per line\n',
+        '{{st-emote::simple}}   bare labels only\n',
+        '{{st-emote::full}}     same as {{st-emote}}</pre>',
+        '<div class="st-emote-hint">',
+        'Clear tokens from the context only (the chat still shows the images). ',
+        'Copy this JSON and import it into the Regex extension with "Import To: Global".',
+        '</div>',
+        '<pre class="st-emote-code" id="st_emote_regex"></pre>',
+        '<div class="menu_button" id="st_emote_copy_regex">Copy regex JSON</div>',
         '<div id="st_emote_packs" class="st-emote-packs"></div>',
         '</div>',
     ].join('');
@@ -141,10 +166,13 @@ export function mountSettingsPanel(context) {
 
     const settings = ensureSettings(context);
     const packContainer = root.querySelector('#st_emote_packs');
-    const refresh = () => renderPackList(context, packContainer, refresh);
+    const missingContainer = root.querySelector('#st_emote_missing');
+    const regexBlock = root.querySelector('#st_emote_regex');
+    const refresh = () => renderPackList(context, packContainer, missingContainer, refresh);
 
     const tagInput = root.querySelector('#st_emote_tag_name');
     tagInput.value = settings.stickerTag;
+    regexBlock.textContent = clearContextRegexJson(settings.stickerTag);
     tagInput.addEventListener('change', () => {
         const result = validateStickerTag(tagInput.value);
         if (!result.ok) {
@@ -155,7 +183,19 @@ export function mountSettingsPanel(context) {
         const current = ensureSettings(context);
         current.stickerTag = result.value;
         allowStickerTag(result.value);
+        regexBlock.textContent = clearContextRegexJson(result.value);
         saveAndRefresh(context);
+    });
+
+    const copyButton = root.querySelector('#st_emote_copy_regex');
+    copyButton.addEventListener('click', async () => {
+        try {
+            await copyText(regexBlock.textContent);
+            toast('success', 'Regex JSON copied.');
+        } catch (error) {
+            console.error(`${LOG_PREFIX} failed to copy regex JSON`, error);
+            toast('error', 'Could not copy to the clipboard; select the text manually.');
+        }
     });
 
     const renderUserCheckbox = root.querySelector('#st_emote_render_user');
@@ -180,18 +220,42 @@ export function mountSettingsPanel(context) {
         refresh();
     });
 
+    const events = context.eventTypes;
+    if (context.eventSource && events?.CHAT_CHANGED) {
+        context.eventSource.on(events.CHAT_CHANGED, refresh);
+    }
+
     refresh();
+}
+
+/**
+ * @param {string} text
+ * @returns {Promise<void>}
+ */
+async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
 }
 
 /**
  * @param {any} context
  * @param {Element} packContainer
+ * @param {Element} missingContainer
  * @param {() => void} refresh
  */
-function renderPackList(context, packContainer, refresh) {
+function renderPackList(context, packContainer, missingContainer, refresh) {
     const settings = ensureSettings(context);
-    packContainer.textContent = '';
+    renderMissingPacks(context, settings, missingContainer, refresh);
 
+    packContainer.textContent = '';
     if (settings.packs.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'st-emote-empty';
@@ -207,6 +271,50 @@ function renderPackList(context, packContainer, refresh) {
 }
 
 /**
+ * Show the packs the current character card enables that are missing locally,
+ * with a button to create the placeholder packs so the references resolve.
+ *
+ * @param {any} context
+ * @param {import('./settings.js').Settings} settings
+ * @param {Element} container
+ * @param {() => void} refresh
+ */
+function renderMissingPacks(context, settings, container, refresh) {
+    container.textContent = '';
+    const missing = missingPackNames(settings, collectCharacterPackNames(context));
+    if (missing.length === 0) {
+        return;
+    }
+
+    const header = document.createElement('div');
+    header.className = 'st-emote-missing-header';
+    header.textContent = `Missing packs referenced by this chat's characters (${missing.length})`;
+    container.append(header);
+
+    const list = document.createElement('div');
+    list.className = 'st-emote-missing-list';
+    list.textContent = missing.join(', ');
+    container.append(list);
+
+    const button = document.createElement('div');
+    button.className = 'menu_button';
+    button.textContent = 'Create missing packs';
+    button.addEventListener('click', () => {
+        const current = ensureSettings(context);
+        for (const name of missing) {
+            if (!findPackByName(current.packs, name)) {
+                createPack(current, name);
+            }
+        }
+        context.saveSettingsDebounced();
+        rerenderChat(context);
+        toast('success', `Created ${missing.length} empty pack${missing.length === 1 ? '' : 's'}. Add images to them.`);
+        refresh();
+    });
+    container.append(button);
+}
+
+/**
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
  * @param {() => void} refresh
@@ -219,24 +327,13 @@ function buildPackElement(context, pack, refresh) {
     const header = document.createElement('div');
     header.className = 'st-emote-pack-header';
 
-    const enableLabel = document.createElement('label');
-    enableLabel.className = 'st-emote-enable';
-    const enableCheckbox = document.createElement('input');
-    enableCheckbox.type = 'checkbox';
-    enableCheckbox.checked = isPackEnabled(ensureSettings(context), pack.name);
-    enableCheckbox.addEventListener('change', () => {
-        setPackEnabled(ensureSettings(context), pack.name, enableCheckbox.checked);
-        saveAndRefresh(context);
-    });
-    enableLabel.append(enableCheckbox, document.createTextNode(' Enabled (global)'));
-    header.append(enableLabel);
-
     const name = document.createElement('input');
     name.type = 'text';
     name.className = 'text_pole st-emote-pack-name';
     name.value = pack.name;
     name.addEventListener('change', () => {
         const current = ensureSettings(context);
+        const previousName = pack.name;
         const check = checkPackName(current, name.value, pack);
         if (!check.ok) {
             toast('warning', check.message);
@@ -244,6 +341,14 @@ function buildPackElement(context, pack, refresh) {
             return;
         }
         renamePack(current, pack, check.value);
+        const nextCharacterScope = renamePackInScope(
+            getCurrentCharacterScope(context),
+            previousName,
+            check.value,
+        );
+        setCurrentCharacterScope(context, nextCharacterScope);
+        const nextChatScope = renamePackInScope(getChatScope(context), previousName, check.value);
+        setChatScope(context, nextChatScope);
         saveAndRefresh(context);
         toast('warning', `Renamed to "${check.value}". Tokens using the old name no longer match.`);
         refresh();
@@ -273,6 +378,7 @@ function buildPackElement(context, pack, refresh) {
     });
     header.append(uploadButton, fileInput);
 
+    header.append(buildScopeToggles(context, pack));
     wrapper.append(header);
 
     const stickers = document.createElement('div');
@@ -282,6 +388,67 @@ function buildPackElement(context, pack, refresh) {
     }
     wrapper.append(stickers);
 
+    return wrapper;
+}
+
+/**
+ * The Global / Character / Chat checkboxes for one pack. Scopes are a pure
+ * union, so every box is independent: checking one never unchecks another.
+ *
+ * @param {any} context
+ * @param {import('./settings.js').PackRecord} pack
+ * @returns {Element}
+ */
+function buildScopeToggles(context, pack) {
+    const group = document.createElement('div');
+    group.className = 'st-emote-scopes';
+
+    group.append(buildScopeToggle('Global', isPackEnabled(ensureSettings(context), pack.name), (checked) => {
+        setPackEnabled(ensureSettings(context), pack.name, checked);
+        saveAndRefresh(context);
+    }));
+
+    const currentCharacter = getCurrentCharacter(context);
+    const hasCharacter = Boolean(currentCharacter);
+    group.append(buildScopeToggle(
+        'Character',
+        hasCharacter && scopeHasPack(getCurrentCharacterScope(context), pack.name),
+        (checked) => {
+            const next = setPackInScope(getCurrentCharacterScope(context), pack.name, checked);
+            setCurrentCharacterScope(context, next).finally(() => rerenderChat(context));
+        },
+        !hasCharacter,
+    ));
+
+    group.append(buildScopeToggle(
+        'Chat',
+        scopeHasPack(getChatScope(context), pack.name),
+        (checked) => {
+            const next = setPackInScope(getChatScope(context), pack.name, checked);
+            setChatScope(context, next);
+            rerenderChat(context);
+        },
+    ));
+
+    return group;
+}
+
+/**
+ * @param {string} label
+ * @param {boolean} checked
+ * @param {(checked: boolean) => void} onChange
+ * @param {boolean} [disabled]
+ * @returns {Element}
+ */
+function buildScopeToggle(label, checked, onChange, disabled = false) {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'st-emote-enable';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = checked;
+    box.disabled = disabled;
+    box.addEventListener('change', () => onChange(box.checked));
+    wrapper.append(box, document.createTextNode(` ${label}`));
     return wrapper;
 }
 

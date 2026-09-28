@@ -125,3 +125,35 @@
     opacity: 0.7;
     font-size: 0.9em;
 }
+
+.st-emote-scopes {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex-basis: 100%;
+}
+
+.st-emote-code {
+    white-space: pre-wrap;
+    overflow-x: auto;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 6px 8px;
+    margin: 4px 0 8px;
+    font-size: 0.85em;
+}
+
+.st-emote-missing {
+    margin-bottom: 8px;
+}
+
+.st-emote-missing-header {
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.st-emote-missing-list {
+    opacity: 0.85;
+    word-break: break-word;
+    margin-bottom: 6px;
+}

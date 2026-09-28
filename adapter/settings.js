@@ -1,5 +1,5 @@
+import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
 import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
-import { normalizePackName } from '../core/normalize.js';
 
 /** Key under `extension_settings` that holds this extension's data. */
 export const STORAGE_KEY = 'st-emote';
@@ -90,10 +90,9 @@ export function createPack(settings, name) {
  * @param {string} newName
  */
 export function renamePack(settings, pack, newName) {
-    const oldKey = normalizePackName(pack.name);
+    const oldName = pack.name;
     pack.name = newName;
-    settings.enabledPackNames = settings.enabledPackNames
-        .map((name) => (normalizePackName(name) === oldKey ? newName : name));
+    settings.enabledPackNames = renamePackInScope(settings.enabledPackNames, oldName, newName);
 }
 
 /**
@@ -102,8 +101,7 @@ export function renamePack(settings, pack, newName) {
  * @returns {boolean}
  */
 export function isPackEnabled(settings, name) {
-    const key = normalizePackName(name);
-    return settings.enabledPackNames.some((item) => normalizePackName(item) === key);
+    return scopeHasPack(settings.enabledPackNames, name);
 }
 
 /**
@@ -112,13 +110,7 @@ export function isPackEnabled(settings, name) {
  * @param {boolean} enabled
  */
 export function setPackEnabled(settings, name, enabled) {
-    const key = normalizePackName(name);
-    settings.enabledPackNames = settings.enabledPackNames.filter(
-        (item) => normalizePackName(item) !== key,
-    );
-    if (enabled) {
-        settings.enabledPackNames.push(String(name).trim());
-    }
+    settings.enabledPackNames = setPackInScope(settings.enabledPackNames, name, enabled);
 }
 
 /**

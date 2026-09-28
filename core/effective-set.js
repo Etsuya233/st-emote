@@ -38,9 +38,92 @@ import { normalizeLabel, normalizePackName } from './normalize.js';
  */
 
 /**
+ * Merge the pack names enabled by several scopes into the effective set's
+ * source list. The scopes are pure union: only additions, no exclusions,
+ * overrides or priorities. Duplicates are dropped case-insensitively, keeping
+ * the spelling and order of the first occurrence.
+ *
+ * @param {...(string[]|null|undefined)} sources - Any number of scope lists,
+ *   conventionally global, then character, then chat.
+ * @returns {string[]}
+ */
+export function mergeEnabledPackNames(...sources) {
+    const merged = [];
+    const seen = new Set();
+    for (const source of sources) {
+        for (const value of Array.isArray(source) ? source : []) {
+            const text = String(value ?? '').trim();
+            const key = normalizePackName(text);
+            if (!key || seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            merged.push(text);
+        }
+    }
+    return merged;
+}
+
+/**
+ * Whether a scope's enabled list contains a pack (case-insensitive).
+ *
+ * @param {string[]|null|undefined} names
+ * @param {unknown} packName
+ * @returns {boolean}
+ */
+export function scopeHasPack(names, packName) {
+    const key = normalizePackName(packName);
+    if (!key) {
+        return false;
+    }
+    return (Array.isArray(names) ? names : [])
+        .some((name) => normalizePackName(name) === key);
+}
+
+/**
+ * Return a copy of a scope's enabled list with one pack turned on or off.
+ * Enabling keeps the caller's spelling and never duplicates an existing entry.
+ *
+ * @param {string[]|null|undefined} names
+ * @param {unknown} packName
+ * @param {boolean} enabled
+ * @returns {string[]}
+ */
+export function setPackInScope(names, packName, enabled) {
+    const key = normalizePackName(packName);
+    const list = Array.isArray(names) ? names : [];
+    if (!key) {
+        return list.slice();
+    }
+    if (!enabled) {
+        return list.filter((name) => normalizePackName(name) !== key);
+    }
+    if (list.some((name) => normalizePackName(name) === key)) {
+        return list.slice();
+    }
+    return [...list, String(packName).trim()];
+}
+
+/**
+ * Remap one pack name inside a scope's enabled list, for renames. Names other
+ * than the renamed pack are left untouched.
+ *
+ * @param {string[]|null|undefined} names
+ * @param {unknown} oldName
+ * @param {unknown} newName
+ * @returns {string[]}
+ */
+export function renamePackInScope(names, oldName, newName) {
+    const oldKey = normalizePackName(oldName);
+    return (Array.isArray(names) ? names : []).map(
+        (name) => (normalizePackName(name) === oldKey ? String(newName).trim() : name),
+    );
+}
+
+/**
  * Resolve the effective set: the union of the packs enabled by the active
- * scopes. Ticket 01 only knows the global scope, so this receives the already
- * merged list of enabled pack names and the full pack catalogue.
+ * scopes. It receives the already merged list of enabled pack names and the
+ * full pack catalogue.
  *
  * A bare label (`[[sticker:label]]`) only resolves when exactly one pack is
  * enabled. With several packs enabled it is ambiguous and counts as a miss.
@@ -119,4 +202,19 @@ export function buildEffectiveSet(packs, enabledPackNames) {
             return { hit: true, pack, sticker };
         },
     };
+}
+
+/**
+ * Build the effective set straight from the three scopes. This is the one place
+ * the union rule lives: global, then character, then chat, deduped by pack name.
+ *
+ * @param {Pack[]} packs - Full pack catalogue.
+ * @param {{global?: string[], character?: string[], chat?: string[]}} [scopes]
+ * @returns {EffectiveSet}
+ */
+export function buildScopedEffectiveSet(packs, scopes = {}) {
+    return buildEffectiveSet(
+        packs,
+        mergeEnabledPackNames(scopes.global, scopes.character, scopes.chat),
+    );
 }

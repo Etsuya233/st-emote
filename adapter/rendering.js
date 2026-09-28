@@ -1,8 +1,14 @@
 import { validateStickerTag } from '../core/constraints.js';
-import { buildEffectiveSet } from '../core/effective-set.js';
+import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
 import { parseTokenBody, tokenPrefixes } from '../core/token.js';
 import { ensureSettings } from './settings.js';
+import {
+    getCharacterScopeForAvatar,
+    getChatScope,
+    getCurrentCharacterScope,
+    liveContext,
+} from './scope.js';
 
 export const LOG_PREFIX = '[st-emote]';
 
@@ -63,14 +69,41 @@ function replaceWithHtml(node, html) {
 }
 
 /**
- * Build the effective set from the current global scope.
+ * The avatar of the character who authored one rendered message. Group chats
+ * store the author on the message itself, so each message resolves its own
+ * role scope. Single-character messages carry the same field after generation.
  *
  * @param {any} context
+ * @param {Element} messageElement
+ * @returns {string|null}
+ */
+function messageAuthorAvatar(context, messageElement) {
+    const messageId = Number(messageElement.getAttribute('mesid'));
+    const chat = liveContext(context)?.chat;
+    if (!Number.isInteger(messageId) || !Array.isArray(chat)) {
+        return null;
+    }
+    return chat[messageId]?.original_avatar ?? null;
+}
+
+/**
+ * Build the effective set for one message: the union of the global scope, the
+ * author's character scope and the chat scope.
+ *
+ * @param {any} context
+ * @param {Element} messageElement
  * @returns {import('../core/effective-set.js').EffectiveSet}
  */
-function buildResolver(context) {
+function effectiveSetForMessage(context, messageElement) {
     const settings = ensureSettings(context);
-    return buildEffectiveSet(settings.packs, settings.enabledPackNames);
+    const avatar = messageAuthorAvatar(context, messageElement);
+    return buildScopedEffectiveSet(settings.packs, {
+        global: settings.enabledPackNames,
+        character: avatar
+            ? getCharacterScopeForAvatar(context, avatar)
+            : getCurrentCharacterScope(context),
+        chat: getChatScope(context),
+    });
 }
 
 /**
@@ -195,7 +228,7 @@ export function renderMessageElement(context, messageElement) {
         return 0;
     }
 
-    const effectiveSet = buildResolver(context);
+    const effectiveSet = effectiveSetForMessage(context, messageElement);
     const tagName = ensureSettings(context).stickerTag;
     let rewritten = renderStickerElements(textElement, effectiveSet, tagName);
     rewritten += renderTextNodes(textElement, effectiveSet, tagName);
@@ -223,12 +256,13 @@ export function processAllMessages(context) {
  */
 export function rerenderChat(context) {
     const chatElement = document.getElementById('chat');
-    if (!chatElement || !Array.isArray(context.chat)) {
+    const chat = liveContext(context)?.chat;
+    if (!chatElement || !Array.isArray(chat)) {
         return;
     }
     chatElement.querySelectorAll('.mes').forEach((messageElement) => {
         const messageId = Number(messageElement.getAttribute('mesid'));
-        const message = Number.isInteger(messageId) ? context.chat[messageId] : null;
+        const message = Number.isInteger(messageId) ? chat[messageId] : null;
         if (message) {
             try {
                 context.updateMessageBlock(messageId, message);
