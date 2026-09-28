@@ -1,0 +1,21 @@
+# 本地开发
+/temp/
+/local_dev.md
+
+# IDE / 编辑器
+/.idea/
+/.vscode/
+*.iml
+
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+target/
+out/
+__pycache__/
+*.pyc
+
+# 操作系统
+.DS_Store
+Thumbs.db

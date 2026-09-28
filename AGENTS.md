@@ -1,3 +1,7 @@
+## 全局约定
+
+开始工作前，先阅读 `~/.agents/AGENTS.md` 并遵循其中的全局规则。
+
 ## Agent skills
 
 ### Issue tracker
