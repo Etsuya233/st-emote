@@ -9,6 +9,7 @@
 
 import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import { shouldRenderMessage } from '../core/processing-scope.js';
+import { LOG_PREFIX, logInfo } from './log.js';
 import { ensureSettings } from './settings.js';
 import {
     getCharacterScopeForAvatar,
@@ -17,7 +18,7 @@ import {
     liveContext,
 } from './scope.js';
 
-export const LOG_PREFIX = '[st-emote]';
+export { LOG_PREFIX };
 
 /**
  * The client's `system_message_types.NARRATOR`, which is what marks a 旁白 line.
@@ -177,7 +178,7 @@ export function eachMessageElement(visit) {
 function logMisses(misses) {
     for (const miss of misses) {
         const qualified = miss.packName ? `${miss.packName}:${miss.label}` : miss.label;
-        console.info(`${LOG_PREFIX} sticker not rendered (${miss.reason}): ${qualified}`);
+        logInfo(`sticker not rendered (${miss.reason}): ${qualified}`);
     }
 }
 
@@ -186,7 +187,7 @@ function logMisses(misses) {
  */
 function logInvalidSizes(invalidSizes) {
     for (const entry of invalidSizes) {
-        console.info(`${LOG_PREFIX} size value ignored, treated as unset: ${entry.field} = "${entry.value}"`);
+        logInfo(`size value ignored, treated as unset: ${entry.field} = "${entry.value}"`);
     }
 }
 

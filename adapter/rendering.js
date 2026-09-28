@@ -32,6 +32,7 @@ import {
     renderOptions,
 } from './render-common.js';
 import { isRenderingEnabled } from './restore.js';
+import { logInfo } from './log.js';
 
 /**
  * The tag name the sanitizer must let through. A configured sticker tag is not
@@ -414,7 +415,7 @@ function handleImageError(event) {
     const reason = isOwnImagePath(src) ? 'image-missing' : 'external-link-failed';
     const qualified = `${target.getAttribute('data-st-emote-pack') ?? ''}`
         + `:${target.getAttribute('data-st-emote-label') ?? ''}`;
-    console.info(`${LOG_PREFIX} sticker not rendered (${reason}): ${qualified} (${src})`);
+    logInfo(`sticker not rendered (${reason}): ${qualified} (${src})`);
     target.remove();
 }
 

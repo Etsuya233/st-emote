@@ -9,8 +9,11 @@
  * size is not a size.
  *
  * The two 尺寸集 are enumerated from `SIZE_SETS` and the fields from
- * `SIZE_FIELDS`, so a value added to the core appears here without anyone editing
- * this file.
+ * `SIZE_FIELDS`, and their labels are catalog keys keyed by those same values, so
+ * a value added to the core appears here without anyone editing this file.
+ *
+ * Every word on screen comes from `core/i18n.js`; there is no label table of
+ * English sentences here to keep in step with a second language.
  */
 
 import { PLACEMENTS } from '../core/placement.js';
@@ -22,33 +25,36 @@ import {
     validateFitMode,
     validateSizeValue,
 } from '../core/size.js';
-import { LOG_PREFIX } from './render-common.js';
+import { logInfo } from './log.js';
+import { tr } from './locale.js';
 import { ensureSettings } from './settings.js';
 
-/** Labels for the 投放方式, including the "follow the global setting" choice a
- * single sticker's override starts from. */
-const PLACEMENT_LABELS = {
-    'in-place': 'In place',
-    'after-block': 'After the block',
-    'message-end': 'End of message',
+/**
+ * The 投放方式 and 尺寸 labels, as catalog keys rather than sentences.
+ *
+ * Keyed by the values `core/placement.js` and `core/size.js` already use, so a
+ * placement or a size field added to the core appears here with a label
+ * attached and nothing in this file edited — and a key with no label shows up as
+ * itself, which is a missing sentence someone can see.
+ */
+const PLACEMENT_LABEL_KEYS = {
+    'in-place': 'placement.in-place',
+    'after-block': 'placement.after-block',
+    'message-end': 'placement.message-end',
 };
 
-const PLACEMENT_FOLLOW_LABEL = 'Follow the global setting';
-
-const SIZE_SET_TITLES = {
-    inline: 'Inline size (in place)',
-    block: 'Block size (after the block / end of message)',
+const SIZE_SET_TITLE_KEYS = {
+    inline: 'size.inline',
+    block: 'size.block',
 };
 
-const SIZE_FIELD_LABELS = {
-    minWidth: 'Min width',
-    minHeight: 'Min height',
-    maxWidth: 'Max width',
-    maxHeight: 'Max height',
-    fit: 'Fill',
+const SIZE_FIELD_LABEL_KEYS = {
+    minWidth: 'size.minWidth',
+    minHeight: 'size.minHeight',
+    maxWidth: 'size.maxWidth',
+    maxHeight: 'size.maxHeight',
+    fit: 'size.fit',
 };
-
-const SIZE_VALUE_HINT = 'needs a number with em, px or %';
 
 /**
  * @param {any} context
@@ -58,7 +64,7 @@ export function mountSizingSection(context, root, onChange) {
     const settings = ensureSettings(context);
     const select = root.querySelector('#st_emote_placement');
     for (const placement of PLACEMENTS) {
-        select.append(option(placement, PLACEMENT_LABELS[placement]));
+        select.append(option(placement, tr(context, PLACEMENT_LABEL_KEYS[placement])));
     }
     select.value = settings.placement;
     select.addEventListener('change', () => {
@@ -84,10 +90,10 @@ export function mountSizingSection(context, root, onChange) {
 export function buildStickerPlacementSelect(context, sticker, onChange) {
     const select = document.createElement('select');
     select.className = 'text_pole st-emote-sticker-placement';
-    select.title = 'Placement override for this sticker';
-    select.append(option('', PLACEMENT_FOLLOW_LABEL));
+    select.title = tr(context, 'placement.override');
+    select.append(option('', tr(context, 'placement.follow')));
     for (const placement of PLACEMENTS) {
-        select.append(option(placement, PLACEMENT_LABELS[placement]));
+        select.append(option(placement, tr(context, PLACEMENT_LABEL_KEYS[placement])));
     }
     select.value = sticker.placement ?? '';
     select.addEventListener('change', () => {
@@ -112,23 +118,24 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
 
     const title = document.createElement('div');
     title.className = 'st-emote-size-set-title';
-    title.textContent = SIZE_SET_TITLES[sizeSet];
+    title.textContent = tr(context, SIZE_SET_TITLE_KEYS[sizeSet]);
     group.append(title);
 
     const fields = document.createElement('div');
     fields.className = 'st-emote-size-fields';
     group.append(fields);
 
+    const invalidHint = tr(context, 'size.invalidHint');
     for (const field of SIZE_FIELDS) {
         if (field === 'fit') {
-            fields.append(buildFitField(settings.sizes[sizeSet].fit, (fit) => {
+            fields.append(buildFitField(context, settings.sizes[sizeSet].fit, (fit) => {
                 ensureSettings(context).sizes[sizeSet].fit = fit;
                 onChange();
             }));
             continue;
         }
         const { wrapper, input, hint } = buildSizeInput(
-            SIZE_FIELD_LABELS[field],
+            tr(context, SIZE_FIELD_LABEL_KEYS[field]),
             defaultSizeValue(sizeSet, field) || '—',
         );
         input.value = settings.sizes[sizeSet][field];
@@ -140,16 +147,16 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
             if (result.ok) {
                 showFieldHint(input, hint, '');
             } else {
-                showFieldHint(input, hint, SIZE_VALUE_HINT);
-                console.info(
-                    `${LOG_PREFIX} ${sizeSet} ${field} "${input.value}" is not a size; using the default instead`,
-                );
+                showFieldHint(input, hint, invalidHint);
+                // The same console trail a render pass leaves, so a size that
+                // never reached the chat can be found next to the misses.
+                logInfo(`${sizeSet} ${field} "${input.value}" is not a size; using the default instead`);
             }
             onChange();
         });
         // A value that was left invalid stays visible as such across a reload.
         if (!validateSizeValue(input.value).ok) {
-            showFieldHint(input, hint, SIZE_VALUE_HINT);
+            showFieldHint(input, hint, invalidHint);
         }
         fields.append(wrapper);
     }
@@ -165,16 +172,16 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
  * @param {(fit: string) => void} onChange
  * @returns {Element}
  */
-function buildFitField(stored, onChange) {
+function buildFitField(context, stored, onChange) {
     const wrapper = document.createElement('label');
     wrapper.className = 'st-emote-field';
 
     const caption = document.createElement('span');
-    caption.textContent = SIZE_FIELD_LABELS.fit;
+    caption.textContent = tr(context, SIZE_FIELD_LABEL_KEYS.fit);
 
     const select = document.createElement('select');
     select.className = 'text_pole';
-    select.append(option('', 'default'));
+    select.append(option('', tr(context, 'size.fitDefault')));
     for (const mode of FIT_MODES) {
         select.append(option(mode, mode));
     }

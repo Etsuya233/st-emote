@@ -341,15 +341,34 @@ test('one bad image refuses the whole pack, with no half-built pack returned', (
 });
 
 test('every refusal reason has a sentence the panel can show', () => {
+    // The reasons `parseManifest` and `planImport` can produce, all of them. The
+    // sentence is a catalog entry keyed by the reason, so a reason added here
+    // without one would read as its own name in the panel — visible, but only to
+    // a user who hit it. This is the check that makes it visible to us.
     for (const reason of [
         'not-a-zip', 'no-manifest', 'not-a-pack', 'unsupported-version', 'name-taken',
         'missing-image', 'unsupported-format', 'image-too-large',
+        'not-json', 'invalid-name', 'invalid-stickers', 'invalid-sticker',
+        'duplicate-label', 'invalid-label', 'invalid-description', 'invalid-placement',
+        'invalid-image', 'unsafe-file', 'invalid-url',
     ]) {
         const message = importFailureMessage(reason);
         assert.equal(typeof message, 'string');
-        assert.notEqual(message.includes(reason), true, reason);
+        assert.notEqual(message, reason, `${reason} has no sentence of its own`);
+        assert.notEqual(message.includes('{'), true, `${reason} left a placeholder behind`);
+        // And the other language has one too.
+        const chinese = importFailureMessage(reason, 'zh-cn');
+        assert.notEqual(chinese, message, reason);
     }
     assert.match(importFailureMessage('image-too-large'), new RegExp(MAX_IMAGE_LABEL));
+});
+
+test('an unknown refusal reason still reads as a sentence rather than as itself', () => {
+    // The fallback: a reason no catalog knows about names the reason, because a
+    // blank toast tells a user nothing at all.
+    const message = importFailureMessage('something-new');
+    assert.match(message, /something-new/);
+    assert.equal(message.includes('{'), false);
 });
 
 test('planImport refuses a pack whose name is already taken, in any spelling', () => {

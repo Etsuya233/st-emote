@@ -15,7 +15,9 @@
  * is exercised on a machine with no SillyTavern checkout at all.)
  */
 
+import { t } from '../core/i18n.js';
 import { MANIFEST_FILE, parseManifest, planPackExport } from '../core/manifest.js';
+import { logInfo } from './log.js';
 
 /** Where the client keeps the zip library. */
 const JSZIP_URL = '/lib/jszip.min.js';
@@ -45,15 +47,16 @@ export async function loadJsZip() {
  * core's export plan, so the two can never fall out of step here.
  *
  * @param {{name: string, stickers: object[]}} pack
+ * @param {string} [locale] - Only used to word a failure the panel will show.
  * @returns {Promise<{blob: Blob, fileName: string, count: number}>}
  */
-export async function buildPackArchive(pack) {
+export async function buildPackArchive(pack, locale) {
     const JSZip = await loadJsZip();
     const zip = new JSZip();
     const { manifest, images } = planPackExport(pack);
 
     for (const { path, image } of images) {
-        zip.file(path, await fetchImageBytes(image));
+        zip.file(path, await fetchImageBytes(image, locale));
     }
 
     // Written last so the 包清单 is the last thing to land in the archive, and
@@ -91,7 +94,7 @@ export async function readPackArchive(file) {
     try {
         zip = await JSZip.loadAsync(file);
     } catch (error) {
-        console.info('[st-emote] that file is not a readable zip', error);
+        logInfo('that file is not a readable zip', error);
         return { ok: false, reason: 'not-a-zip' };
     }
 
@@ -143,10 +146,21 @@ export function downloadBlob(blob, fileName) {
  * @param {string} path
  * @returns {Promise<Uint8Array>}
  */
-async function fetchImageBytes(path) {
+/**
+ * The bytes of one stored image, or a refusal naming the file.
+ *
+ * The refusal is a catalog sentence rather than developer text because the panel
+ * shows it: an export whose picture did not travel is otherwise reported as a
+ * bare stack message, which is the one case a user can actually fix themselves.
+ *
+ * @param {string} path
+ * @param {string} [locale]
+ * @returns {Promise<Uint8Array>}
+ */
+async function fetchImageBytes(path, locale) {
     const response = await fetch(path);
     if (!response.ok) {
-        throw new Error(`image file is not on this server: ${path}`);
+        throw new Error(t('export.imageMissing', locale, { path }));
     }
     return new Uint8Array(await response.arrayBuffer());
 }

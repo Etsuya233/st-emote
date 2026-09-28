@@ -6,6 +6,18 @@
  * matches, which files may be deleted, whether an archive may be imported — all
  * live in `core/`. What is here is the DOM, the file dialogs and the calls into
  * SillyTavern's endpoints.
+ *
+ * **Every sentence on screen comes from `core/i18n.js`.** There is no English
+ * literal left in this file to translate later: the reason a half-finished
+ * panel is embarrassing is that it is invisible until a user opens it, and the
+ * only way to keep that from happening is for there to be no second place a
+ * sentence could be written. Which language those sentences come from is
+ * `adapter/locale.js`'s one fact, read once at mount.
+ *
+ * The static skeleton is assembled with `innerHTML` because it is fixed markup
+ * with no user data in it; anything the user typed or named goes in through
+ * `textContent`, or through `trHtml` where a sentence has to be assembled into
+ * markup alongside a pack name.
  */
 
 import {
@@ -37,9 +49,11 @@ import {
 import { normalizeLabel } from '../core/normalize.js';
 import { importFailureMessage, planImport } from '../core/manifest.js';
 import { buildPackArchive, downloadBlob, readPackArchive } from './archive.js';
+import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
+import { currentLocale, tr } from './locale.js';
+import { LOG_PREFIX } from './log.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
-import { LOG_PREFIX } from './render-common.js';
 import { clearContextRegexJson } from './regex.js';
 import { buildStickerPlacementSelect, mountSizingSection } from './sizing-panel.js';
 import {
@@ -65,22 +79,11 @@ import {
     imageFileChecker,
     listOwnImageFiles,
     uploadImage,
-    uploadRefusalMessage,
     uploadStickerImage,
 } from './upload.js';
 
 /** The file dialog's filter, derived from the rules rather than written out. */
 const ACCEPTED_MIME = acceptedImageTypes();
-
-const CONSTRAINT_REASONS = {
-    empty: 'cannot be empty',
-    'too-long': 'is too long',
-    'forbidden-character': 'cannot contain [ ] < or >',
-    newline: 'must stay on a single line',
-    colon: 'cannot contain ":"',
-    invalid: 'must start with a letter and use only letters, digits and "-"',
-    reserved: 'is a real HTML tag name',
-};
 
 /**
  * The file names of our own images that are on this server, and the predicate
@@ -102,29 +105,36 @@ let storedImageFiles = null;
 const selectedStickerIds = new Set();
 
 /**
- * @param {string} field
+ * The sentence for a refused field, with the field named and the reason given.
+ *
+ * The reason keys are the same ones `core/constraints.js` produces, so a new rule
+ * cannot be added there and left without a sentence here.
+ *
+ * @param {any} context
+ * @param {'packName'|'label'|'description'|'htmlTag'} field
  * @param {string} reason
  * @returns {string}
  */
-function constraintMessage(field, reason) {
-    return `${field} ${CONSTRAINT_REASONS[reason] ?? 'is invalid'}.`;
+function constraintMessage(context, field, reason) {
+    return `${tr(context, `constraint.${field}`)} ${tr(context, `constraint.reason.${reason}`)}.`;
 }
 
 /**
  * Validate a new pack name and its app-wide uniqueness.
  *
+ * @param {any} context
  * @param {import('./settings.js').Settings} settings
  * @param {unknown} value
  * @param {object} [except]
  * @returns {{ok: true, value: string} | {ok: false, message: string}}
  */
-function checkPackName(settings, value, except) {
+function checkPackName(context, settings, value, except) {
     const result = validatePackName(value);
     if (!result.ok) {
-        return { ok: false, message: constraintMessage('Pack name', result.reason) };
+        return { ok: false, message: constraintMessage(context, 'packName', result.reason) };
     }
     if (findPackByName(settings.packs, result.value, { except })) {
-        return { ok: false, message: `A pack named "${result.value}" already exists.` };
+        return { ok: false, message: tr(context, 'pack.nameTaken', { name: result.value }) };
     }
     return { ok: true, value: result.value };
 }
@@ -132,18 +142,19 @@ function checkPackName(settings, value, except) {
 /**
  * Validate a label and its uniqueness inside one pack.
  *
+ * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
  * @param {unknown} value
  * @param {object} [except]
  * @returns {{ok: true, value: string} | {ok: false, message: string}}
  */
-function checkLabel(pack, value, except) {
+function checkLabel(context, pack, value, except) {
     const result = validateLabel(value);
     if (!result.ok) {
-        return { ok: false, message: constraintMessage('Label', result.reason) };
+        return { ok: false, message: constraintMessage(context, 'label', result.reason) };
     }
     if (findStickerByLabel(pack.stickers, result.value, { except })) {
-        return { ok: false, message: `This pack already has a sticker labelled "${result.value}".` };
+        return { ok: false, message: tr(context, 'sticker.labelTaken', { name: result.value }) };
     }
     return { ok: true, value: result.value };
 }
@@ -175,6 +186,79 @@ function stickerImageMissing(sticker) {
 }
 
 /**
+ * The panel's fixed skeleton: the intro, the two global switches, the 投放方式
+ * and 尺寸 containers the sizing section fills, the pack creator, the macro and
+ * regex hints, the import row, and the place the pack list goes.
+ *
+ * Only markup and ids here — every visible word is filled in afterwards through
+ * `textContent`, because a sentence carrying a user's pack name must not be able
+ * to arrive as an element.
+ *
+ * @returns {string}
+ */
+function panelSkeleton() {
+    return [
+        '<div class="inline-drawer-toggle inline-drawer-header">',
+        '<b>st-emote</b>',
+        '<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>',
+        '</div>',
+        '<div class="inline-drawer-content">',
+        '<div class="st-emote-hint" id="st_emote_intro"></div>',
+        '<div class="st-emote-options">',
+        '<label class="st-emote-option">',
+        '<input type="checkbox" id="st_emote_render_user"> <span id="st_emote_render_user_label"></span>',
+        '</label>',
+        '<label class="st-emote-option">',
+        '<span id="st_emote_tag_name_label"></span>',
+        '<input type="text" class="text_pole" id="st_emote_tag_name">',
+        '</label>',
+        '</div>',
+        '<div class="st-emote-hint" id="st_emote_size_hint"></div>',
+        '<div class="st-emote-placement">',
+        '<label class="st-emote-field">',
+        '<span id="st_emote_placement_label"></span>',
+        '<select class="text_pole" id="st_emote_placement"></select>',
+        '</label>',
+        '</div>',
+        '<div id="st_emote_sizes" class="st-emote-sizes"></div>',
+        '<div class="st-emote-create">',
+        '<input type="text" class="text_pole" id="st_emote_new_pack">',
+        '<div class="menu_button" id="st_emote_create_pack"></div>',
+        '</div>',
+        '<div id="st_emote_missing" class="st-emote-missing"></div>',
+        '<div class="st-emote-hint" id="st_emote_macro_hint"></div>',
+        '<pre class="st-emote-code" id="st_emote_macro_example"></pre>',
+        '<div class="st-emote-hint" id="st_emote_regex_hint"></div>',
+        '<pre class="st-emote-code" id="st_emote_regex"></pre>',
+        '<div class="menu_button" id="st_emote_copy_regex"></div>',
+        '<div class="st-emote-hint" id="st_emote_transfer_hint"></div>',
+        '<div class="st-emote-import">',
+        '<input type="text" class="text_pole" id="st_emote_search">',
+        '<div class="menu_button" id="st_emote_import_pack"></div>',
+        '</div>',
+        '<div id="st_emote_packs" class="st-emote-packs"></div>',
+        '</div>',
+    ].join('');
+}
+
+/**
+ * The intro paragraph, which is the one place a sentence and a code sample sit
+ * side by side. Built as its own element tree rather than one string so the
+ * sample keeps its `<code>` styling while the prose stays plain text.
+ *
+ * @param {any} context
+ * @param {HTMLElement} target
+ */
+function fillIntro(context, target) {
+    target.textContent = tr(context, 'panel.intro');
+    const caption = document.createElement('div');
+    caption.textContent = `${tr(context, 'panel.introTokenCaption')} `;
+    const example = document.createElement('code');
+    example.textContent = tr(context, 'panel.tokenExample');
+    target.append(caption, example);
+}
+
+/**
  * Mount the settings drawer into the Extensions panel.
  *
  * @param {any} context
@@ -188,68 +272,7 @@ export function mountSettingsPanel(context) {
     const root = document.createElement('div');
     root.id = 'st_emote_drawer';
     root.className = 'inline-drawer';
-    root.innerHTML = [
-        '<div class="inline-drawer-toggle inline-drawer-header">',
-        '<b>st-emote</b>',
-        '<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>',
-        '</div>',
-        '<div class="inline-drawer-content">',
-        '<div class="st-emote-hint">',
-        'Upload images into a pack and give each sticker a label. ',
-        'Enable a pack globally, per character or per chat to render ',
-        '<code>[[sticker:pack:label]]</code> in AI replies.',
-        '</div>',
-        '<div class="st-emote-options">',
-        '<label class="st-emote-option">',
-        '<input type="checkbox" id="st_emote_render_user"> Render stickers in user messages',
-        '</label>',
-        '<label class="st-emote-option">',
-        'HTML tag form: <input type="text" class="text_pole" id="st_emote_tag_name">',
-        '</label>',
-        '</div>',
-        '<div class="st-emote-hint">',
-        'Where a sticker shows up and how big it is. Write sizes as a number with ',
-        '<code>em</code>, <code>px</code> or <code>%</code>; <code>1em</code> is the ',
-        'current chat text height. An empty field falls back to its default. ',
-        '<code>%</code> is only meaningful on a width: a percentage height depends ',
-        'on the parent having a height of its own.',
-        '</div>',
-        '<div class="st-emote-placement">',
-        '<label class="st-emote-field">',
-        '<span>Placement</span>',
-        '<select class="text_pole" id="st_emote_placement"></select>',
-        '</label>',
-        '</div>',
-        '<div id="st_emote_sizes" class="st-emote-sizes"></div>',
-        '<div class="st-emote-create">',
-        '<input type="text" class="text_pole" id="st_emote_new_pack" placeholder="New pack name">',
-        '<div class="menu_button" id="st_emote_create_pack">Create pack</div>',
-        '</div>',
-        '<div id="st_emote_missing" class="st-emote-missing"></div>',
-        '<div class="st-emote-hint">',
-        'Write one of these in your own preset to get the sticker listing:',
-        '</div>',
-        '<pre class="st-emote-code">{{st-emote}}       one "pack:label" per line\n',
-        '{{st-emote::simple}}   bare labels only\n',
-        '{{st-emote::full}}     same as {{st-emote}}</pre>',
-        '<div class="st-emote-hint">',
-        'Clear tokens from the context only (the chat still shows the images). ',
-        'Copy this JSON and import it into the Regex extension with "Import To: Global".',
-        '</div>',
-        '<pre class="st-emote-code" id="st_emote_regex"></pre>',
-        '<div class="menu_button" id="st_emote_copy_regex">Copy regex JSON</div>',
-        '<div class="st-emote-hint">',
-        'Move a whole pack around: export writes one zip with the images and their ',
-        'labels, descriptions and placement overrides; import takes such a zip back. ',
-        'An imported pack is not enabled anywhere until you say so.',
-        '</div>',
-        '<div class="st-emote-import">',
-        '<input type="text" class="text_pole" id="st_emote_search" placeholder="Search labels and descriptions">',
-        '<div class="menu_button" id="st_emote_import_pack">Import pack (.zip)</div>',
-        '</div>',
-        '<div id="st_emote_packs" class="st-emote-packs"></div>',
-        '</div>',
-    ].join('');
+    root.innerHTML = panelSkeleton();
     container.append(root);
 
     const settings = ensureSettings(context);
@@ -259,13 +282,31 @@ export function mountSettingsPanel(context) {
     const searchInput = root.querySelector('#st_emote_search');
     const refresh = () => renderPackList(context, packContainer, missingContainer, refresh);
 
+    fillIntro(context, root.querySelector('#st_emote_intro'));
+    root.querySelector('#st_emote_size_hint').textContent = tr(context, 'panel.sizeHint');
+    root.querySelector('#st_emote_placement_label').textContent = tr(context, 'placement.label');
+    root.querySelector('#st_emote_render_user_label').textContent = tr(context, 'panel.renderUser');
+    root.querySelector('#st_emote_tag_name_label').textContent = `${tr(context, 'panel.tagName')}:`;
+    root.querySelector('#st_emote_new_pack').placeholder = tr(context, 'panel.newPackName');
+    root.querySelector('#st_emote_create_pack').textContent = tr(context, 'panel.createPack');
+    root.querySelector('#st_emote_macro_hint').textContent = tr(context, 'panel.macroHint');
+    root.querySelector('#st_emote_macro_example').textContent = tr(context, 'panel.macroExample');
+    root.querySelector('#st_emote_regex_hint').textContent = tr(context, 'panel.regexHint');
+    root.querySelector('#st_emote_copy_regex').textContent = tr(context, 'panel.copyRegex');
+    root.querySelector('#st_emote_transfer_hint').textContent = tr(context, 'panel.transferHint');
+    searchInput.placeholder = tr(context, 'panel.searchPlaceholder');
+    root.querySelector('#st_emote_import_pack').textContent = tr(context, 'panel.importPack');
+    // The debug area sits above the library: it is a tool for tuning the settings
+    // further up, and the pack list below it is the longest thing on the page.
+    root.querySelector('#st_emote_packs').before(mountDebugSection(context, root));
+
     const tagInput = root.querySelector('#st_emote_tag_name');
     tagInput.value = settings.stickerTag;
     regexBlock.textContent = clearContextRegexJson(settings.stickerTag);
     tagInput.addEventListener('change', () => {
         const result = validateStickerTag(tagInput.value);
         if (!result.ok) {
-            toast('warning', constraintMessage('HTML tag name', result.reason));
+            toast('warning', constraintMessage(context, 'htmlTag', result.reason));
             tagInput.value = ensureSettings(context).stickerTag;
             return;
         }
@@ -280,10 +321,10 @@ export function mountSettingsPanel(context) {
     copyButton.addEventListener('click', async () => {
         try {
             await copyText(regexBlock.textContent);
-            toast('success', 'Regex JSON copied.');
+            toast('success', tr(context, 'panel.regexCopied'));
         } catch (error) {
             console.error(`${LOG_PREFIX} failed to copy regex JSON`, error);
-            toast('error', 'Could not copy to the clipboard; select the text manually.');
+            toast('error', tr(context, 'panel.regexCopyFailed'));
         }
     });
 
@@ -300,7 +341,7 @@ export function mountSettingsPanel(context) {
     const createButton = root.querySelector('#st_emote_create_pack');
     createButton.addEventListener('click', () => {
         const current = ensureSettings(context);
-        const check = checkPackName(current, nameInput.value);
+        const check = checkPackName(context, current, nameInput.value);
         if (!check.ok) {
             toast('warning', check.message);
             return;
@@ -351,11 +392,10 @@ function mountImportButton(context, root, refresh) {
     button.after(fileInput);
 }
 
-
-/** How each `PACK_STATES` value reads in the list. */
-const PACK_STATE_LABELS = {
-    [PACK_STATES.empty]: '空',
-    [PACK_STATES.imagesMissing]: '图片未同步',
+/** How each `PACK_STATES` value reads in the list. The keys are the catalog's. */
+const PACK_STATE_LABEL_KEYS = {
+    [PACK_STATES.empty]: 'pack.stateEmpty',
+    [PACK_STATES.imagesMissing]: 'pack.stateImagesMissing',
 };
 
 /**
@@ -425,8 +465,8 @@ function renderPackList(context, packContainer, missingContainer, refresh) {
         const empty = document.createElement('div');
         empty.className = 'st-emote-empty';
         empty.textContent = settings.packs.length === 0
-            ? 'No packs yet. Create one to upload images.'
-            : `No sticker matches "${query}".`;
+            ? tr(context, 'panel.noPacks')
+            : tr(context, 'panel.noStickerMatches', { query });
         packContainer.append(empty);
         return;
     }
@@ -454,7 +494,7 @@ function renderMissingPacks(context, settings, container, refresh) {
 
     const header = document.createElement('div');
     header.className = 'st-emote-missing-header';
-    header.textContent = `Missing packs referenced by this chat's characters (${missing.length})`;
+    header.textContent = tr(context, 'panel.missingPackHeader', { count: missing.length });
     container.append(header);
 
     const list = document.createElement('div');
@@ -462,7 +502,7 @@ function renderMissingPacks(context, settings, container, refresh) {
     list.textContent = missing.join(', ');
     container.append(list);
 
-    const button = actionButton('Create missing packs');
+    const button = actionButton(tr(context, 'panel.createMissingPacks'));
     button.addEventListener('click', () => {
         const current = ensureSettings(context);
         for (const name of missing) {
@@ -472,7 +512,7 @@ function renderMissingPacks(context, settings, container, refresh) {
         }
         context.saveSettingsDebounced();
         rerenderChat(context);
-        toast('success', `Created ${missing.length} empty pack${missing.length === 1 ? '' : 's'}. Add images to them.`);
+        toast('success', tr(context, 'panel.missingPacksCreated', { count: missing.length }));
         refresh();
     });
     container.append(button);
@@ -510,37 +550,40 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
 
     const count = document.createElement('span');
     count.className = 'st-emote-pack-count';
-    count.textContent = `${pack.stickers.length} sticker${pack.stickers.length === 1 ? '' : 's'}`;
+    count.textContent = tr(context, 'pack.stickerCount', { count: pack.stickers.length });
     header.append(count);
 
-    if (PACK_STATE_LABELS[state]) {
-        const badge = document.createElement('span');
-        badge.className = `st-emote-badge st-emote-badge-${state}`;
-        badge.textContent = PACK_STATE_LABELS[state];
-        badge.title = state === PACK_STATES.empty
-            ? 'This pack has no stickers yet. It can be enabled, but no token will resolve to it.'
-            : 'The image files are not on this server. The pack still works — re-point the '
-                + 'stickers at your own copies of the images.';
-        header.append(badge);
+    const stateKey = PACK_STATE_LABEL_KEYS[state];
+    if (stateKey) {
+        // The class stays `st-emote-badge-<state>`: the stylesheet reads it to
+        // colour the two states differently, so it is a hook rather than a label.
+        header.append(badge(
+            tr(context, stateKey),
+            `st-emote-badge-${state}`,
+            tr(context, `${stateKey}Title`),
+        ));
     }
 
     header.append(filePickerButton(
-        'Upload images',
+        tr(context, 'pack.uploadImages'),
         { accept: ACCEPTED_MIME, multiple: true, className: 'st-emote-upload' },
         (files) => handleUploads(context, pack, files, refresh),
     ));
-    header.append(actionButton('Add image URL', 'st-emote-add-url'));
-    header.querySelector('.st-emote-add-url').addEventListener('click', async () => {
+    const addUrl = actionButton(tr(context, 'pack.addImageUrl'), 'st-emote-add-url');
+    header.append(addUrl);
+    addUrl.addEventListener('click', async () => {
         await handleExternalUrl(context, pack, refresh);
     });
 
     if (!searching) {
-        header.append(actionButton('Export .zip', 'st-emote-export'));
-        header.querySelector('.st-emote-export').addEventListener('click', async () => {
+        const exportButton = actionButton(tr(context, 'pack.exportZip'), 'st-emote-export');
+        header.append(exportButton);
+        exportButton.addEventListener('click', async () => {
             await handleExport(context, pack);
         });
-        header.append(actionButton('Delete pack', 'st-emote-delete-pack'));
-        header.querySelector('.st-emote-delete-pack').addEventListener('click', async () => {
+        const deleteButton = actionButton(tr(context, 'pack.deletePack'), 'st-emote-delete-pack');
+        header.append(deleteButton);
+        deleteButton.addEventListener('click', async () => {
             await handleDeletePack(context, pack, refresh);
         });
     }
@@ -586,7 +629,7 @@ function buildPackCover(context, pack, state, refresh) {
         // hint because a greyed-out pack with no way back in is the one state
         // this whole feature exists to recover from.
         cover.classList.add('st-emote-cover-action');
-        cover.title = 'Images are not on this server — click to re-point the first missing sticker';
+        cover.title = tr(context, 'pack.coverRepoint');
         cover.addEventListener('click', async () => {
             const target = pack.stickers.find((sticker) => stickerImageMissing(sticker));
             if (!target) {
@@ -612,7 +655,7 @@ function buildPackNameInput(context, pack, refresh) {
     name.addEventListener('change', () => {
         const current = ensureSettings(context);
         const previousName = pack.name;
-        const check = checkPackName(current, name.value, pack);
+        const check = checkPackName(context, current, name.value, pack);
         if (!check.ok) {
             toast('warning', check.message);
             name.value = pack.name;
@@ -628,7 +671,7 @@ function buildPackNameInput(context, pack, refresh) {
         const nextChatScope = renamePackInScope(getChatScope(context), previousName, check.value);
         setChatScope(context, nextChatScope);
         saveAndRefresh(context);
-        toast('warning', `Renamed to "${check.value}". Tokens using the old name no longer match.`);
+        toast('warning', tr(context, 'pack.renamed', { name: check.value }));
         refresh();
     });
     return name;
@@ -654,7 +697,7 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
 
     const all = document.createElement('input');
     all.type = 'checkbox';
-    all.title = 'Select every sticker in this pack';
+    all.title = tr(context, 'pack.selectAllTitle');
     all.checked = visible.length > 0 && visible.every((sticker) => selectedStickerIds.has(sticker.id));
     all.addEventListener('change', () => {
         for (const sticker of visible) {
@@ -668,7 +711,7 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
     });
 
     const label = document.createElement('span');
-    label.textContent = searching ? 'Select the matches' : 'Select all';
+    label.textContent = searching ? tr(context, 'pack.selectMatches') : tr(context, 'pack.selectAll');
     const wrapper = document.createElement('label');
     wrapper.className = 'st-emote-enable';
     wrapper.append(all, label);
@@ -677,11 +720,16 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
     const chosen = selectedInPack(pack);
     const count = document.createElement('span');
     count.className = 'st-emote-pack-count';
-    count.textContent = chosen === 0 ? '' : `${chosen} selected`;
+    count.textContent = chosen === 0
+        ? ''
+        : tr(context, 'pack.selectedCount', { count: chosen });
     bar.append(count);
 
     if (chosen > 0) {
-        const remove = actionButton(`Delete ${chosen} selected`, 'st-emote-delete-selected');
+        const remove = actionButton(
+            tr(context, 'pack.deleteSelected', { count: chosen }),
+            'st-emote-delete-selected',
+        );
         remove.addEventListener('click', async () => {
             await handleBatchDelete(context, pack, refresh);
         });
@@ -692,7 +740,7 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
         // here would delete stickers the user cannot see.
         bar.append(Object.assign(document.createElement('span'), {
             className: 'st-emote-hint',
-            textContent: 'Clear the search to delete selected stickers.',
+            textContent: tr(context, 'pack.searchDeleteHint'),
         }));
     }
 
@@ -723,15 +771,19 @@ function buildScopeToggles(context, pack) {
     const group = document.createElement('div');
     group.className = 'st-emote-scopes';
 
-    group.append(buildScopeToggle('Global', isPackEnabled(ensureSettings(context), pack.name), (checked) => {
-        setPackEnabled(ensureSettings(context), pack.name, checked);
-        saveAndRefresh(context);
-    }));
+    group.append(buildScopeToggle(
+        tr(context, 'scope.global'),
+        isPackEnabled(ensureSettings(context), pack.name),
+        (checked) => {
+            setPackEnabled(ensureSettings(context), pack.name, checked);
+            saveAndRefresh(context);
+        },
+    ));
 
     const currentCharacter = getCurrentCharacter(context);
     const hasCharacter = Boolean(currentCharacter);
     group.append(buildScopeToggle(
-        'Character',
+        tr(context, 'scope.character'),
         hasCharacter && scopeHasPack(getCurrentCharacterScope(context), pack.name),
         (checked) => {
             const next = setPackInScope(getCurrentCharacterScope(context), pack.name, checked);
@@ -741,7 +793,7 @@ function buildScopeToggles(context, pack) {
     ));
 
     group.append(buildScopeToggle(
-        'Chat',
+        tr(context, 'scope.chat'),
         scopeHasPack(getChatScope(context), pack.name),
         (checked) => {
             const next = setPackInScope(getChatScope(context), pack.name, checked);
@@ -787,7 +839,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     const tick = document.createElement('input');
     tick.type = 'checkbox';
     tick.className = 'st-emote-sticker-tick';
-    tick.title = 'Select for a batch delete';
+    tick.title = tr(context, 'sticker.selectForDelete');
     tick.checked = selectedStickerIds.has(sticker.id);
     tick.addEventListener('change', () => {
         if (tick.checked) {
@@ -804,11 +856,11 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     const labelInput = document.createElement('input');
     labelInput.type = 'text';
     labelInput.className = 'text_pole st-emote-label';
-    labelInput.placeholder = 'Label';
+    labelInput.placeholder = tr(context, 'sticker.labelPlaceholder');
     labelInput.value = sticker.label;
     labelInput.addEventListener('change', () => {
         const previousLabel = sticker.label;
-        const check = checkLabel(pack, labelInput.value, sticker);
+        const check = checkLabel(context, pack, labelInput.value, sticker);
         if (!check.ok) {
             toast('warning', check.message);
             labelInput.value = sticker.label;
@@ -820,28 +872,34 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         // a change that normalises away costs no tokens, a real one invalidates
         // every token already written in a chat.
         if (renameBreaksTokens(previousLabel, check.value)) {
-            toast('warning', `Label is now "${check.value}". Tokens using the old label no longer match.`);
+            toast('warning', tr(context, 'sticker.renamed', { name: check.value }));
         }
         refresh();
     });
     row.append(labelInput);
 
     if (!normalizeLabel(sticker.label)) {
-        row.append(badge('待填标签', ''));
+        row.append(badge(tr(context, 'sticker.unlabeled')));
     }
     if (isExternalImageUrl(sticker.image)) {
-        row.append(badge('外链', 'st-emote-badge-external', 'The image comes from a URL and is not stored here.'));
+        row.append(badge(
+            tr(context, 'sticker.external'),
+            'st-emote-badge-external',
+            tr(context, 'sticker.externalTitle'),
+        ));
     }
 
     const descriptionInput = document.createElement('input');
     descriptionInput.type = 'text';
     descriptionInput.className = 'text_pole st-emote-description';
+    // The spec's "an empty description shows as an em dash", and an em dash
+    // reads the same in every language this catalog ships.
     descriptionInput.placeholder = '—';
     descriptionInput.value = sticker.description ?? '';
     descriptionInput.addEventListener('change', () => {
         const result = validateDescription(descriptionInput.value);
         if (!result.ok) {
-            toast('warning', constraintMessage('Description', result.reason));
+            toast('warning', constraintMessage(context, 'description', result.reason));
             descriptionInput.value = sticker.description ?? '';
             return;
         }
@@ -852,7 +910,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     row.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
 
     const replace = filePickerButton(
-        'Replace',
+        tr(context, 'sticker.replace'),
         { accept: ACCEPTED_MIME, className: 'st-emote-replace' },
         async (files) => {
             await replaceStickerImageWithFile(context, pack, sticker, refresh, files[0]);
@@ -861,7 +919,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     row.append(replace);
 
     if (!searching) {
-        const remove = actionButton('Delete', 'st-emote-sticker-delete');
+        const remove = actionButton(tr(context, 'sticker.delete'), 'st-emote-sticker-delete');
         remove.addEventListener('click', async () => {
             await handleStickerDelete(context, pack, sticker, refresh);
         });
@@ -932,10 +990,10 @@ async function handleUploads(context, pack, files, refresh) {
     for (const file of files) {
         const sticker = createSticker();
         try {
-            sticker.image = await uploadStickerImage(context, file, sticker.id);
+            sticker.image = await uploadStickerImage(context, file, sticker.id, currentLocale(context));
         } catch (error) {
             console.error(`${LOG_PREFIX} upload failed for ${file.name}`, error);
-            toast('error', `${file.name} was not added: ${error.message}`);
+            toast('error', tr(context, 'upload.failed', { name: file.name, reason: error.message }));
             continue;
         }
         pack.stickers.push(sticker);
@@ -948,14 +1006,13 @@ async function handleUploads(context, pack, files, refresh) {
 
     if (uploaded > 0) {
         context.saveSettingsDebounced();
-        toast('success', `Uploaded ${uploaded} image${uploaded === 1 ? '' : 's'} into "${pack.name}".`);
+        toast('success', tr(context, 'upload.done', { count: uploaded, name: pack.name }));
     }
     if (tooTall.length > 0) {
-        toast(
-            'warning',
-            `Taller than the suggested ${SUGGESTED_MAX_HEIGHT_PX}px: ${tooTall.join(', ')}. `
-            + 'They still work; a smaller image just reads better inline.',
-        );
+        toast('warning', tr(context, 'upload.tooTall', {
+            limit: SUGGESTED_MAX_HEIGHT_PX,
+            names: tooTall.join(', '),
+        }));
     }
     await refreshStoredImages(context);
     rerenderChat(context);
@@ -970,22 +1027,20 @@ async function handleUploads(context, pack, files, refresh) {
  * @param {() => void} refresh
  */
 async function handleExternalUrl(context, pack, refresh) {
-    const answer = await askForText(context, 'Image URL (http:// or https://):');
+    const answer = await askForText(context, tr(context, 'url.prompt'));
     if (answer === null) {
         return;
     }
     const check = validateExternalImageUrl(answer);
     if (!check.ok) {
-        toast('warning', check.reason === 'empty'
-            ? 'No address given.'
-            : 'That is not an http(s) image address.');
+        toast('warning', tr(context, check.reason === 'empty' ? 'url.empty' : 'url.malformed'));
         return;
     }
     const sticker = createSticker();
     sticker.image = check.value;
     pack.stickers.push(sticker);
     context.saveSettingsDebounced();
-    toast('success', `Added an external sticker to "${pack.name}". Give it a label to use it.`);
+    toast('success', tr(context, 'url.added', { name: pack.name }));
     rerenderChat(context);
     refresh();
 }
@@ -1012,10 +1067,10 @@ async function replaceStickerImageWithFile(context, pack, sticker, refresh, file
 
     let stored;
     try {
-        stored = await uploadStickerImage(context, chosen, sticker.id);
+        stored = await uploadStickerImage(context, chosen, sticker.id, currentLocale(context));
     } catch (error) {
         console.error(`${LOG_PREFIX} could not replace the image of ${sticker.id}`, error);
-        toast('error', `The image was not replaced: ${error.message}`);
+        toast('error', tr(context, 'image.replaceFailed', { reason: error.message }));
         return;
     }
 
@@ -1026,9 +1081,7 @@ async function replaceStickerImageWithFile(context, pack, sticker, refresh, file
         await deleteImageQuietly(context, previous);
     }
     context.saveSettingsDebounced();
-    toast('success', previous
-        ? 'Image replaced; the label and description are unchanged.'
-        : 'Image set.');
+    toast('success', tr(context, previous ? 'image.replaced' : 'image.set'));
     await refreshStoredImages(context);
     rerenderChat(context);
     refresh();
@@ -1061,8 +1114,12 @@ function pickFile(accept) {
  * @param {() => void} refresh
  */
 async function handleStickerDelete(context, pack, sticker, refresh) {
-    const label = sticker.label ? `"${sticker.label}"` : 'this sticker';
-    const confirmed = await confirmWithUser(context, `Delete ${label} and its image file?`);
+    // An unlabeled sticker has no name to put in the sentence, so it gets the
+    // one that says "this sticker" instead of a confirmation naming nothing.
+    const message = normalizeLabel(sticker.label)
+        ? tr(context, 'delete.sticker', { name: `"${sticker.label}"` })
+        : tr(context, 'delete.stickerUnnamed');
+    const confirmed = await confirmWithUser(context, message);
     if (!confirmed) {
         return;
     }
@@ -1083,7 +1140,7 @@ async function handleBatchDelete(context, pack, refresh) {
     }
     const confirmed = await confirmWithUser(
         context,
-        `Delete ${chosen.length} sticker${chosen.length === 1 ? '' : 's'} and their image files?`,
+        tr(context, 'delete.selected', { count: chosen.length }),
     );
     if (!confirmed) {
         return;
@@ -1128,9 +1185,7 @@ async function handleDeletePack(context, pack, refresh) {
     const count = pack.stickers.length;
     const confirmed = await confirmWithUser(
         context,
-        `Delete the pack "${pack.name}"? `
-        + `That removes ${count} sticker${count === 1 ? '' : 's'} and deletes their image files, `
-        + 'and takes the pack out of every scope. Tokens naming it will stop matching.',
+        tr(context, 'delete.pack', { name: pack.name, count }),
     );
     if (!confirmed) {
         return;
@@ -1149,7 +1204,7 @@ async function handleDeletePack(context, pack, refresh) {
         await deleteImageQuietly(context, file);
     }
     await refreshStoredImages(context);
-    toast('success', `Deleted "${pack.name}".`);
+    toast('success', tr(context, 'delete.packDone', { name: pack.name }));
     rerenderChat(context);
     refresh();
 }
@@ -1162,12 +1217,12 @@ async function handleDeletePack(context, pack, refresh) {
  */
 async function handleExport(context, pack) {
     try {
-        const { blob, fileName, count } = await buildPackArchive(pack);
+        const { blob, fileName, count } = await buildPackArchive(pack, currentLocale(context));
         downloadBlob(blob, fileName);
-        toast('success', `Exported "${pack.name}" with ${count} image${count === 1 ? '' : 's'}.`);
+        toast('success', tr(context, 'export.done', { name: pack.name, count }));
     } catch (error) {
         console.error(`${LOG_PREFIX} could not export "${pack.name}"`, error);
-        toast('error', `Could not export "${pack.name}": ${error.message}`);
+        toast('error', tr(context, 'export.failed', { name: pack.name, reason: error.message }));
     }
 }
 
@@ -1188,11 +1243,11 @@ async function handleImport(context, file, refresh) {
         archive = await readPackArchive(file);
     } catch (error) {
         console.error(`${LOG_PREFIX} could not read ${file.name}`, error);
-        toast('error', `Could not read ${file.name}: ${error.message}`);
+        toast('error', tr(context, 'import.readFailed', { name: file.name, reason: error.message }));
         return;
     }
     if (!archive.ok) {
-        toast('warning', importFailureMessage(archive.reason));
+        toast('warning', importFailureMessage(archive.reason, currentLocale(context)));
         return;
     }
 
@@ -1205,7 +1260,7 @@ async function handleImport(context, file, refresh) {
     );
     const plan = planImport(archive.manifest, current.packs, newId, imageSizes);
     if (!plan.ok) {
-        toast('warning', importFailureMessage(plan.reason));
+        toast('warning', importFailureMessage(plan.reason, currentLocale(context)));
         return;
     }
 
@@ -1225,7 +1280,7 @@ async function handleImport(context, file, refresh) {
             stored += 1;
         } catch (error) {
             console.error(`${LOG_PREFIX} could not store ${upload.path} from ${file.name}`, error);
-            toast('warning', `${upload.path} could not be stored: ${error.message}`);
+            toast('warning', tr(context, 'upload.failed', { name: upload.path, reason: error.message }));
         }
     }
 
@@ -1234,12 +1289,11 @@ async function handleImport(context, file, refresh) {
     addImportedPack(current, plan.pack);
     context.saveSettingsDebounced();
     await refreshStoredImages(context);
-    toast(
-        'success',
-        `Imported "${plan.pack.name}" with ${plan.pack.stickers.length} sticker`
-        + `${plan.pack.stickers.length === 1 ? '' : 's'} (${stored} image${stored === 1 ? '' : 's'}). `
-        + 'It is not enabled anywhere yet.',
-    );
+    toast('success', tr(context, 'import.done', {
+        name: plan.pack.name,
+        count: plan.pack.stickers.length,
+        stored,
+    }));
     rerenderChat(context);
     refresh();
 }

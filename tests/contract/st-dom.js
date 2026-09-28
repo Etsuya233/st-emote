@@ -54,12 +54,18 @@ export async function withChat(bodyHtml, body) {
  * second implementation of the browser again.
  *
  * @param {(harness: object) => void|Promise<void>} body
+ * @param {{locale?: string}} [options] - The locale the client reports.
  */
-export async function withPanel(body) {
+export async function withPanel(body, options = {}) {
     return withChat('', async (harness) => {
         const container = harness.document.createElement('div');
         container.id = 'extensions_settings';
         harness.document.body.append(container);
+        // The panel reads the client's language once at mount, so the harness
+        // has to be able to answer in one. English is the default because that
+        // is the catalog's source locale and the one a missing
+        // `getCurrentLocale` must fall back to.
+        harness.getCurrentLocale = () => options.locale ?? 'en';
         await body({ ...harness, panel: container });
     });
 }
@@ -189,12 +195,39 @@ function createContext(document) {
         characters: [],
         chat: [],
         chatMetadata: {},
+        // The client's index into `characters`, undefined here: no character is
+        // selected, which is the state a fresh install is in.
+        characterId: undefined,
         eventTypes: EVENT_TYPES,
         eventSource: createEventBus(),
         getRequestHeaders: () => ({ 'x-csrf-token': 'test' }),
         saveSettingsDebounced: () => {},
-        updateChatMetadata() {},
+        /**
+         * The client's own metadata write, which merges into the current chat's
+         * metadata object. Merged rather than replaced, because that is what the
+         * client does and because replacing would silently drop every other
+         * extension's key — a difference a scope test would never notice until
+         * it started failing for the wrong reason.
+         *
+         * @param {Record<string, any>} data
+         */
+        updateChatMetadata(data) {
+            Object.assign(this.chatMetadata, data);
+        },
         saveMetadata() {},
+        /**
+         * The client's own write into a character card's extension fields.
+         * Recorded rather than applied, so a test can read back what a slash
+         * command or a panel checkbox asked the card to hold.
+         *
+         * @param {number|undefined} characterId
+         * @param {string} key
+         * @param {any} value
+         */
+        writeExtensionField(characterId, key, value) {
+            this.writtenFields.push({ characterId, key, value });
+        },
+        writtenFields: [],
         /**
          * The client's own re-render: run the message text through formatting
          * and replace the body with the result, exactly as the real

@@ -1,8 +1,10 @@
 import { buildScopedEffectiveSet } from '../core/effective-set.js';
+import { t } from '../core/i18n.js';
 import { buildListing } from '../core/listing.js';
-import { LOG_PREFIX } from './render-common.js';
+import { currentLocale } from './locale.js';
+import { logInfo } from './log.js';
 import { ensureSettings } from './settings.js';
-import { getChatScope, getCurrentCharacterScope, liveContext } from './scope.js';
+import { getChatScope, getCurrentCharacterScope } from './scope.js';
 
 /** Macro the user writes in their own preset to get the sticker listing. */
 export const MACRO_NAME = 'st-emote';
@@ -22,12 +24,9 @@ export function expandListing(context, mode) {
         character: getCurrentCharacterScope(context),
         chat: getChatScope(context),
     });
-    const locale = liveContext(context)?.getCurrentLocale?.() ?? 'en';
-    return buildListing(effectiveSet, { mode, locale });
+    return buildListing(effectiveSet, { mode, locale: currentLocale(context) });
 }
 
-const MACRO_DESCRIPTION = 'Lists the stickers available to the current scopes, one row per sticker.';
-const MACRO_RETURNS = 'One "pack:label" row per sticker. With "simple" it prints bare labels. An empty set prints the word for "none".';
 const MACRO_EXAMPLES = ['{{st-emote}}', '{{st-emote::simple}}', '{{st-emote::full}}'];
 
 /**
@@ -42,6 +41,12 @@ const MACRO_EXAMPLES = ['{{st-emote}}', '{{st-emote::simple}}', '{{st-emote::ful
  * @param {any} context
  */
 export function installMacro(context) {
+    // The macro's own description is documentation, not interface: the client
+    // shows it in its macro help, which the user reads in whatever language the
+    // client is in, so it comes from the same catalog as the panel. Read once —
+    // a locale change reloads the page, so it cannot go stale underneath us.
+    const locale = currentLocale(context);
+
     if (context.macros?.register) {
         context.macros.register(MACRO_NAME, {
             category: 'utility',
@@ -50,12 +55,12 @@ export function installMacro(context) {
                     name: 'mode',
                     optional: true,
                     defaultValue: 'full',
-                    description: 'Listing mode: "simple" prints bare labels, "full" prints "pack:label".',
+                    description: t('macro.modeDescription', locale),
                     sampleValue: 'simple',
                 },
             ],
-            description: MACRO_DESCRIPTION,
-            returns: MACRO_RETURNS,
+            description: t('macro.description', locale),
+            returns: t('macro.returns', locale),
             exampleUsage: MACRO_EXAMPLES,
             handler: ({ unnamedArgs }) => expandListing(context, unnamedArgs?.[0]),
         });
@@ -65,8 +70,12 @@ export function installMacro(context) {
         return;
     }
     if (typeof context.registerMacro !== 'function') {
-        console.warn(`${LOG_PREFIX} no macro API available; {{${MACRO_NAME}}} will not expand.`);
+        logInfo(`no macro API available; {{${MACRO_NAME}}} will not expand.`);
         return;
     }
-    context.registerMacro(MACRO_NAME, () => expandListing(context, 'full'), MACRO_DESCRIPTION);
+    context.registerMacro(
+        MACRO_NAME,
+        () => expandListing(context, 'full'),
+        t('macro.description', locale),
+    );
 }

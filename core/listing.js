@@ -1,10 +1,5 @@
+import { t } from './i18n.js';
 import { normalizeLabel } from './normalize.js';
-
-/** Text the listing expands to when the effective set is empty, by language. */
-const EMPTY_TEXT = {
-    zh: '无',
-    en: 'none',
-};
 
 /**
  * @typedef {Object} ListingOptions
@@ -42,8 +37,11 @@ export function buildListing(effectiveSet, options = {}) {
     }
 
     if (rows.length === 0) {
-        const locale = String(options.locale ?? 'en').toLowerCase();
-        return locale.startsWith('zh') ? EMPTY_TEXT.zh : EMPTY_TEXT.en;
+        // The one word the macro expands to when there is nothing to list. It
+        // comes from the same catalog as the panel, so the two cannot end up
+        // disagreeing about what this extension calls an empty set — and the
+        // listing is the one place where the language reaches the *prompt*.
+        return t('listing.empty', options.locale);
     }
     return rows.join('\n');
 }

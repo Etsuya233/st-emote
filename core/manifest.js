@@ -26,6 +26,7 @@ import {
     isExternalImageUrl,
     validateExternalImageUrl,
 } from './image-rules.js';
+import { t } from './i18n.js';
 import { validatePlacement } from './placement.js';
 
 /** Marker identifying our own archive, so a foreign zip is refused by name. */
@@ -274,35 +275,23 @@ export function isSafeArchivePath(file) {
 /**
  * Every way an import can be refused, in the panel's words.
  *
- * They live beside the rules that produce them rather than in the adapter, for
- * the reason every other rule here does: a reason and the sentence that explains
- * it are one fact, and keeping them apart is what makes a new reason get added
- * to one file and not the other.
+ * The sentences are catalog entries keyed by the reason, so a refusal is as
+ * bilingual as the rest of the panel and adding a reason to this module without
+ * a sentence to say it in is visible rather than showing an English fallback in
+ * a Chinese UI. They live beside the rules that produce them rather than in the
+ * adapter, for the reason every other rule here does: a reason and the sentence
+ * that explains it are one fact.
  *
  * @param {string} reason
+ * @param {string} [locale] - SillyTavern's UI locale.
  * @returns {string}
  */
-export function importFailureMessage(reason) {
-    switch (reason) {
-        case 'not-a-zip':
-            return 'that file is not a readable zip archive';
-        case 'no-manifest':
-            return `that zip has no ${MANIFEST_FILE} in it, so it is not a st-emote pack`;
-        case 'not-a-pack':
-            return 'that zip was not made by st-emote';
-        case 'unsupported-version':
-            return 'that pack was made by a newer version of st-emote';
-        case 'name-taken':
-            return 'a pack with that name already exists; rename or delete it first';
-        case 'missing-image':
-            return 'that pack is incomplete: one of its image files is missing from the zip';
-        case 'unsupported-format':
-            return 'that pack holds an image that is not a png, jpg, webp or gif';
-        case 'image-too-large':
-            return `that pack holds an image larger than ${MAX_IMAGE_LABEL}`;
-        default:
-            return `that pack could not be read (${reason})`;
-    }
+export function importFailureMessage(reason, locale) {
+    return t(`import.reason.${reason}`, locale, {
+        file: MANIFEST_FILE,
+        limit: MAX_IMAGE_LABEL,
+        reason,
+    });
 }
 
 /**

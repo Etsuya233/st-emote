@@ -310,3 +310,49 @@
     word-break: break-word;
     margin-bottom: 6px;
 }
+
+/*
+ * The debug area: paste a message, see it rendered, leave the chat alone.
+ *
+ * The output box is the one place the panel writes rendered HTML, and what lands
+ * in it is the same markup a chat message gets — including the sticker images
+ * themselves, so a preview shows the real size rather than a description of it.
+ */
+.st-emote-debug {
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.st-emote-debug textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 0.9em;
+}
+
+.st-emote-debug-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 6px 0 4px;
+}
+
+.st-emote-debug-actions .menu_button {
+    flex-shrink: 0;
+}
+
+.st-emote-preview-note {
+    font-size: 0.8em;
+    opacity: 0.85;
+    margin-bottom: 4px;
+}
+
+.st-emote-preview {
+    border: 1px dashed var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 6px 8px;
+    min-height: 1.5em;
+    font-size: 0.9em;
+}

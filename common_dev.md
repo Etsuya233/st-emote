@@ -9,7 +9,7 @@
 - **名称**：st-emote
 - **形态**：SillyTavern 扩展
 - **一句话**：模型在回复里用标记指名表情，扩展把标记渲染成表情图片。
-- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）、票 04（投放方式与尺寸）、票 05（旧版本兼容路径与产出统一）与票 06（存储与生命周期）已实现；后续票据见 `.scratch/st-emote/issues/`。
+- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）、票 04（投放方式与尺寸）、票 05（旧版本兼容路径与产出统一）、票 06（存储与生命周期）与票 07（调试工具、操作入口、本地化与文档）已实现；后续票据见 `.scratch/st-emote/issues/`。
 
 相关文档：
 
@@ -54,8 +54,8 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 
 ### 代码布局
 
-- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）。
-- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层，`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。`ui.js` 只剩表情包的列表与行。
+- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）；票 07 起还有界面文案目录（`i18n.js`）、冲突检测（`conflict.js`）与「试渲染」（`preview.js`）。
+- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层，`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。票 07 起：`locale.js` 是「客户端是哪种语言」这**一个**事实（其余全交给 `core/i18n.js`）；`log.js` 是唯一的控制台出口（`LOG_PREFIX` 与 `logInfo`），`render-common.js` 只是把它转发出去；`commands.js` 注册 `/st-emote`；`debug-panel.js` 是调试区（试渲染 + 重新渲染）。`ui.js` 只剩表情包的列表与行。
 - `tests/`：纯核心测试 + 共享契约 + 两条适配层的对照与生命周期测试 + 面板与压缩包的集成测试。
 
 ### 图片的存储与生命周期（票 06）
@@ -87,9 +87,19 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - 路径与生命周期：`tests/dom-path.test.js`、`tests/hook-path.test.js`、`tests/entry.test.js`。`tests/contract/st-dom.js` 只伪造客户的接口面（`getContext`、事件总线、`updateMessageBlock`、图片端点的 `fetch`），DOM 本身是真的。
 - 票 06 的纯核心：`tests/image-rules.test.js`、`tests/catalogue.test.js`、`tests/manifest.test.js`、`tests/library.test.js`。
 - 票 06 的适配层：`tests/panel.test.js`（真 jsdom 面板，驱动真实的 `adapter/ui.js`）与 `tests/archive.test.js`（真 zip 往返）。两者共用 `tests/contract/st-dom.js` 里的 `withJsZip`——它用 **devDependency `jszip`** 装出那个全局，**没有任何 skip 路径**：一套会静默跳过的导出/导入测试，等于一次什么都不证明的绿色 `npm test`。运行时仍然读客户自带的 `/lib/jszip.min.js`。
-- 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀。
+- 票 07 的纯核心：`tests/i18n.test.js`（两份目录键集对齐、回退、无标记、单复数）、`tests/conflict.test.js`（冲突检测与清单）、`tests/preview.test.js`（粘一段 → HTML、未命中的理由）。
+- 票 07 的适配层：`tests/commands.test.js`（驱动真实的 `runCommand`；注册本身只查客户端有没有那几个类）、`tests/panel.test.js` 里新加的几条（整个面板是否双语、用户输入是否只当文本、试渲染不碰聊天、重渲染按钮）。
+- 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀、**ST 切换语言后面板是否跟着变**（ST 自己会刷新页面，扩展只读一次语言）。
+
+### 界面文案与日志（票 07）
+
+- **所有用户可见文案只有一处**：`core/i18n.js` 的 `EN` / `ZH_CN` 两份目录 + 纯函数 `t(key, locale, values)`。适配层只提供 locale 字符串（`adapter/locale.js`），连宏的说明文字也走同一份目录。新增文案**必须**两边同时加：`tests/i18n.test.js` 的键集对齐会挂。
+- 目录值**不带标记**（有测试守着），所以面板的固定骨架用 `innerHTML`、其余一律 `textContent`。用户输入（包名、搜索词、文件名）只进 `textContent`。
+- `zh-cn` 之外的 `zh-*` 变体（`zh-tw` / `zh-hant` / `zh-hk`）**故意回落英文**——给繁体用户简体不如给他能读的英文。
+- **控制台只有一个出口**：`adapter/log.js` 的 `LOG_PREFIX`（`[st-emote]`）与 `logInfo()`。未命中、冲突、非法尺寸、以及「调试区渲染了一次」都走它。**界面里没有日志面板**（spec「Out of Scope」）。
+- `importFailureMessage(reason, locale)` 现在是目录查询而不是 switch：每种拒绝理由都要有一句 `import.reason.<reason>`，`tests/manifest.test.js` 会把 `parseManifest` / `planImport` 的全部理由跑一遍。
 
 ## 待补充
 
-- README（安装、用法、最低支持的 ST 版本），见票 07
+- 票 07 之后若再开票，先更新本文件与 `README.md`（README 已覆盖安装、三层作用域、宏、这条边界、最低 ST 版本）
 - 参考资料链接（SillyTavern 扩展开发文档等）

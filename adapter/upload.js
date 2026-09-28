@@ -15,21 +15,25 @@ import {
     acceptImageFile,
     ownImageFileName,
 } from '../core/image-rules.js';
+import { t } from '../core/i18n.js';
+import { logInfo } from './log.js';
 import { newId } from './settings.js';
 
 /**
  * The reason an upload was refused, in words the panel can show as-is. The size
  * in the sentence is the core's `MAX_IMAGE_LABEL`, so the two cannot drift.
  *
+ * Thrown as the message of the error the caller reports, which is why it takes
+ * the locale rather than a context: this is reached before any panel is around.
+ *
  * @param {string} reason - An `ImageAcceptance` reason.
+ * @param {string} [locale] - SillyTavern's UI locale.
  * @returns {string}
  */
-export function uploadRefusalMessage(reason) {
-    if (reason === 'too-large') {
-        return `larger than ${MAX_IMAGE_LABEL} — pick a smaller file `
-            + '(this extension does not compress images)';
-    }
-    return 'not a png, jpg, webp or gif';
+export function uploadRefusalMessage(reason, locale) {
+    return t(reason === 'too-large' ? 'upload.tooLarge' : 'upload.unsupportedFormat', locale, {
+        limit: MAX_IMAGE_LABEL,
+    });
 }
 
 /**
@@ -40,15 +44,16 @@ export function uploadRefusalMessage(reason) {
  * rather than being sent and rejected: the acceptance rules are the core's, and
  * this is the second place they are asked, not a second copy of them.
  *
- * @param {{getRequestHeaders: () => Record<string, string>}} context
+ * @param {any} context
  * @param {File|{name: string, size: number}} file
  * @param {string} stickerId
+ * @param {string} [locale] - Only used to word a refusal.
  * @returns {Promise<string>}
  */
-export async function uploadStickerImage(context, file, stickerId) {
+export async function uploadStickerImage(context, file, stickerId, locale) {
     const accepted = acceptImageFile(file);
     if (!accepted.ok) {
-        throw new Error(uploadRefusalMessage(accepted.reason));
+        throw new Error(uploadRefusalMessage(accepted.reason, locale));
     }
     return uploadImage(context, await readAsBase64(file), accepted.format, stickerId);
 }
@@ -158,7 +163,10 @@ export async function listOwnImageFiles(context) {
         }
         return new Set(names.filter((name) => typeof name === 'string'));
     } catch (error) {
-        console.warn('[st-emote] could not list stored images; assuming none are missing', error);
+        // Warned rather than thrown because the answer this function gives on
+        // failure is "no claim either way" — a failure the user cannot see would
+        // otherwise read as "every image on this server is missing".
+        logInfo('could not list stored images; assuming none are missing', error);
         return null;
     }
 }

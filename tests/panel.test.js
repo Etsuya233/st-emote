@@ -58,6 +58,7 @@ const CATALOGUE = {
  * @param {object} [options.settings]
  * @param {string[]} [options.storedFiles] - File names the server reports.
  * @param {object} [options.fetch] - A `fakeFetch` replacement.
+ * @param {string} [options.locale] - The locale the client reports.
  * @param {(context: any) => void|Promise<void>} body
  */
 async function withPanelMounted(options, body) {
@@ -92,7 +93,7 @@ async function withPanelMounted(options, body) {
             globalThis.fetch = savedFetch;
             delete globalThis.window.toastr;
         }
-    });
+    }, { locale: options?.locale });
 }
 
 test('the panel lists packs sorted by name, with the first sticker as the cover', async () => {
@@ -107,10 +108,10 @@ test('the panel lists packs sorted by name, with the first sticker as the cover'
     });
 });
 
-test('a pack with no stickers reads as 空', async () => {
+test('a pack with no stickers reads as empty', async () => {
     await withPanelMounted({}, ({ document }) => {
         const badges = [...document.querySelectorAll('.st-emote-badge')].map((badge) => badge.textContent);
-        assert.equal(badges.includes('空'), true);
+        assert.equal(badges.includes('empty'), true);
     });
 });
 
@@ -124,7 +125,7 @@ test('a pack whose image file is not on the server is greyed but still enableabl
         assert.equal(daily.classList.contains('st-emote-pack-missing'), true);
         assert.match(
             daily.querySelector('.st-emote-badge-images-missing').textContent,
-            /图片未同步/,
+            /images not synced/,
         );
 
         // Still enableable: the scope boxes a greyed-out pack offers are the
@@ -209,10 +210,10 @@ test('a URL that is not an http address is refused', async () => {
     });
 });
 
-test('an external sticker is marked 外链, and its row has no local file to lose', async () => {
+test('an external sticker is marked as one, and its row has no local file to lose', async () => {
     await withPanelMounted({}, ({ document }) => {
         const badges = [...document.querySelectorAll('.st-emote-badge-external')].map((b) => b.textContent);
-        assert.deepEqual(badges, ['外链']);
+        assert.deepEqual(badges, ['external']);
     });
 });
 
@@ -359,7 +360,7 @@ test('uploading refuses a file the core rejects, and says why', async () => {
     });
 });
 
-test('adding a URL sticker stores the address and marks it 外链', async () => {
+test('adding a URL sticker stores the address and marks it external', async () => {
     await withPanelMounted({}, async ({ document, extensionSettings }) => {
         globalThis.prompt = () => 'https://example.com/cat.gif';
         packByName(document, 'daily').querySelector('.st-emote-add-url').click();
@@ -371,7 +372,7 @@ test('adding a URL sticker stores the address and marks it 外链', async () => 
         assert.equal(added.label, '');
         assert.match(
             document.querySelectorAll('.st-emote-badge-external')[0].textContent,
-            /外链/,
+            /external/,
         );
         delete globalThis.prompt;
     });
@@ -542,6 +543,157 @@ test('importing a pack whose name is taken is refused, and nothing is stored', a
         });
     });
 });
+
+test('the panel speaks the client\'s language, and the whole of it', async () => {
+    // One test for the whole surface, because the failure it guards is "someone
+    // added a sentence to a new place and forgot the other language" — and that
+    // shows up as one English string on a Chinese page, not as a missing feature.
+    const english = await panelText({});
+    const chinese = await panelText({ locale: 'zh-cn' });
+
+    // The static part of the panel.
+    for (const probe of [
+        'Create pack', 'Search labels and descriptions', 'Import pack (.zip)',
+        'Copy regex JSON', 'Render stickers in user messages',
+        'In place', 'Inline size (in place)', 'Min width',
+    ]) {
+        assert.ok(english.includes(probe), `the English panel is missing "${probe}"`);
+    }
+    for (const probe of ['新建表情包', '搜索标签与描述', '原地', '最小宽度']) {
+        assert.ok(chinese.includes(probe), `the Chinese panel is missing "${probe}"`);
+    }
+
+    // And the per-pack part, which is built separately on every refresh.
+    assert.ok(english.includes('Upload images') && english.includes('3 stickers'));
+    assert.ok(chinese.includes('上传图片') && chinese.includes('3 个表情'));
+
+    // A locale the catalog does not ship reads as English rather than blank.
+    const french = await panelText({ locale: 'fr-fr' });
+    assert.ok(french.includes('Create pack'));
+    assert.equal(french, english);
+});
+
+test('a pack name and a search query reach the panel as text, never as markup', async () => {
+    // The panel interpolates the user's own strings into sentences. It applies
+    // them with `textContent`, so a name chosen to break out of its label stays a
+    // name; this is the test that would notice a future `innerHTML` in the path.
+    await withPanelMounted({
+        settings: {
+            packs: [{
+                name: '<img src=x>',
+                stickers: [{ id: 'x1', label: '<b>hi</b>', description: '', image: '' }],
+            }],
+        },
+    }, ({ document }) => {
+        assert.equal(document.querySelectorAll('img[src="x"]').length, 0);
+        assert.equal(document.querySelectorAll('#st_emote_packs b').length, 0);
+        assert.equal(document.querySelector('.st-emote-pack-name').value, '<img src=x>');
+        // And the search box, the other place a user string is echoed back.
+        const search = document.getElementById('st_emote_search');
+        search.value = '<b>nothing</b>';
+        search.dispatchEvent(new globalThis.window.Event('input'));
+        assert.equal(document.querySelectorAll('.st-emote-empty b').length, 0);
+        assert.match(document.querySelector('.st-emote-empty').textContent, /<b>nothing<\/b>/);
+    });
+});
+
+test('pasting a message into the debug box renders it without touching the chat', async () => {
+    await withPanelMounted({}, async ({ document, chat, extensionSettings }) => {
+        const box = document.getElementById('st_emote_preview');
+        const output = document.getElementById('st_emote_preview_out');
+        const note = document.getElementById('st_emote_preview_note');
+        assert.ok(box, 'the debug box is missing');
+        assert.equal(output.innerHTML, '');
+
+        box.value = 'She smiles. [[sticker:daily:happy]]';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+
+        // The same markup a message in the chat would get.
+        assert.match(output.innerHTML, /custom-st-emote/);
+        assert.match(output.innerHTML, /data-st-emote-label="happy"/);
+        assert.match(output.innerHTML, /She smiles\./);
+        // Nothing rendered, so there is nothing to warn about.
+        assert.equal(note.textContent, '');
+
+        // And the chat is exactly as it was: the whole point of the tool.
+        assert.equal(chat.length, 0);
+        assert.equal(document.querySelectorAll('#chat .mes').length, 0);
+        assert.equal(extensionSettings[STORAGE_KEY].packs.length, 3);
+    });
+});
+
+test('the debug box says what did not render, in the panel\'s language', async () => {
+    await withPanelMounted({}, async ({ document }) => {
+        const box = document.getElementById('st_emote_preview');
+        const output = document.getElementById('st_emote_preview_out');
+        const note = document.getElementById('st_emote_preview_note');
+
+        box.value = '[[sticker:daily:nope]]';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+
+        // The marker is gone from the preview exactly as it would be from a chat.
+        assert.equal(output.textContent, '');
+        assert.match(note.textContent, /Not rendered/);
+        assert.match(note.textContent, /no sticker of that label/);
+    });
+});
+
+test('text with no token in it says so rather than reporting a miss', async () => {
+    await withPanelMounted({}, async ({ document }) => {
+        const box = document.getElementById('st_emote_preview');
+        const note = document.getElementById('st_emote_preview_note');
+
+        box.value = 'just a sentence';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+        assert.match(note.textContent, /no sticker token in it/);
+
+        // An untouched box is not a question, so it gets no answer.
+        box.value = '';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+        assert.equal(note.textContent, '');
+    });
+});
+
+test('the re-render button repaints the chat and says so', async () => {
+    await withPanelMounted({}, async ({ document, toasts }) => {
+        const button = document.getElementById('st_emote_rerender');
+        assert.ok(button, 'the re-render button is missing');
+        assert.match(button.textContent, /Re-render the current chat/);
+
+        button.click();
+        await settle();
+        assert.equal(toasts.at(-1)[0], 'success');
+        assert.match(toasts.at(-1)[1], /Re-rendered the current chat/);
+    });
+});
+
+/**
+ * Every word the panel paints, as one string. The panel is the only place a
+ * sentence can be assembled, so collecting its text is how a test asks "is the
+ * whole surface in this language" without holding down one control per key.
+ *
+ * @param {{locale?: string}} [options]
+ * @returns {Promise<string>}
+ */
+async function panelText(options) {
+    let collected = '';
+    await withPanelMounted(options, ({ document }) => {
+        const parts = [document.getElementById('st_emote_drawer').textContent];
+        for (const node of document.querySelectorAll(
+            '[placeholder], [title], option',
+        )) {
+            parts.push(node.getAttribute('placeholder') ?? '');
+            parts.push(node.getAttribute('title') ?? '');
+            parts.push(node.textContent ?? '');
+        }
+        collected = parts.join('\n');
+    });
+    return collected;
+}
 
 /**
  * @param {Document} document

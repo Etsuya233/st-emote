@@ -1,3 +1,4 @@
+import { installCommands } from './adapter/commands.js';
 import { installMacro } from './adapter/macro.js';
 import { installRendering } from './adapter/render-path.js';
 import { rerenderChat } from './adapter/rendering.js';
@@ -12,6 +13,10 @@ installMacro(context);
 
 jQuery(() => {
     mountSettingsPanel(context);
+    // Registered inside the ready-callback rather than at load: the command
+    // parser is one of the things the client builds while it is starting, and a
+    // registration that found it half-built would be a silently missing command.
+    installCommands(context);
     installRendering(context);
 });
 
