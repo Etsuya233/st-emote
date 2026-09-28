@@ -13,7 +13,7 @@
  */
 
 import { STICKER_CLASS, TOKEN_ATTRIBUTE } from '../core/render.js';
-import { LOG_PREFIX } from './render-common.js';
+import { LOG_PREFIX, eachMessageElement, liveMessage } from './render-common.js';
 import { liveContext } from './scope.js';
 
 /**
@@ -46,12 +46,8 @@ export function restoreMessageElement(messageElement) {
  * @returns {number} Number of images that were put back.
  */
 export function restoreMessageText(context) {
-    const chatElement = document.getElementById('chat');
-    if (!chatElement) {
-        return 0;
-    }
     let restored = 0;
-    chatElement.querySelectorAll('.mes').forEach((messageElement) => {
+    eachMessageElement((messageElement) => {
         restored += restoreMessageElement(messageElement);
     });
     return restored;
@@ -74,17 +70,15 @@ export function restoreMessageText(context) {
  * @returns {number} Number of messages re-rendered.
  */
 function restitchMessages(context) {
-    const chatElement = document.getElementById('chat');
-    const chat = context?.chat;
-    if (!chatElement || !Array.isArray(chat) || typeof context.updateMessageBlock !== 'function') {
+    if (typeof context?.updateMessageBlock !== 'function') {
         return 0;
     }
     let restitched = 0;
-    for (const messageElement of chatElement.querySelectorAll('.mes')) {
+    eachMessageElement((messageElement) => {
         const messageId = Number(messageElement.getAttribute('mesid'));
-        const message = Number.isInteger(messageId) && messageId >= 0 ? chat[messageId] : null;
+        const message = liveMessage(context, messageId);
         if (!message) {
-            continue;
+            return;
         }
         try {
             context.updateMessageBlock(messageId, message);
@@ -92,7 +86,7 @@ function restitchMessages(context) {
         } catch (error) {
             console.error(`${LOG_PREFIX} failed to restore message ${messageId}`, error);
         }
-    }
+    });
     return restitched;
 }
 

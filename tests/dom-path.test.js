@@ -56,6 +56,51 @@ test('re-rendering the same message twice inserts nothing twice', async () => {
     });
 });
 
+test('消息末尾 moves every image to the end of the message, not to its own block', async () => {
+    // The two placements differ in *which* place they choose; the block boundary
+    // only says where within an 块后 the image goes. Deciding on the boundary
+    // alone answers "after this paragraph" for a token inside one, which silently
+    // turns 消息末尾 into 块后.
+    const html = '<p>one [[sticker:daily:happy]]</p>\n<p>two [[sticker:daily:sad]]</p>';
+    await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks({ placement: 'message-end' }));
+        installDomRendering(context);
+        processAllMessages(context);
+
+        const textElement = document.querySelector('.mes_text');
+        const images = [...textElement.querySelectorAll(`img.${STICKER_CLASS}`)];
+        assert.equal(images.length, 2);
+        // Both are the message's last children, in the order they were written.
+        assert.deepEqual(
+            [...textElement.children].slice(-2),
+            images,
+        );
+        assert.equal(textElement.querySelectorAll('p img').length, 0);
+        assert.deepEqual(images.map((image) => image.getAttribute('alt')), ['happy', 'sad']);
+    });
+});
+
+test('after-block still lands each image at its own block boundary', async () => {
+    const html = '<p>one [[sticker:daily:happy]]</p>\n<p>two [[sticker:daily:sad]]</p>';
+    await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks({ placement: 'after-block' }));
+        installDomRendering(context);
+        processAllMessages(context);
+
+        const textElement = document.querySelector('.mes_text');
+        // Each image is a sibling of its own block rather than a child, and the
+        // blocks keep their order, so the children alternate paragraph, image.
+        assert.deepEqual(
+            [...textElement.children].map((node) => node.tagName),
+            ['P', 'IMG', 'P', 'IMG'],
+        );
+        assert.deepEqual(
+            [...textElement.querySelectorAll(':scope > img')].map((image) => image.getAttribute('alt')),
+            ['happy', 'sad'],
+        );
+    });
+});
+
 test('a relocated image is not dragged somewhere else by a second pass', async () => {
     const html = '<p>first [[sticker:daily:big]]</p>\n<p>second</p>';
     await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
@@ -271,4 +316,95 @@ test('restoring twice changes nothing the second time', async (t) => {
         stopRendering(context);
         assert.equal(restoreMessageText(context), 0);
     });
+});
+
+test('a disabled extension does not render again when a render event fires', async (t) => {
+    // The event subscriptions outlive `onDisable`: the client does not reload, and
+    // unsubscribing would mean remembering every listener. So the gate has to be
+    // inside the DOM pass, not around the subscription — otherwise the next
+    // message the client renders puts the stickers straight back into a chat the
+    // user just turned them off in.
+    reenable(t);
+    const html = '<p>[[sticker:daily:happy]]</p>';
+    await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks());
+        context.chat = [{ mes: html }];
+        installDomRendering(context);
+        processAllMessages(context);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 1);
+
+        stopRendering(context);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+
+        // Every event the DOM path listens for, one after another.
+        for (const event of Object.values(EVENT_TYPES)) {
+            context.eventSource.emit(event, 0);
+        }
+        processAllMessages(context);
+        rerenderChat(context);
+        assert.equal(
+            document.querySelectorAll(`img.${STICKER_CLASS}`).length,
+            0,
+            'a disabled extension must not render again',
+        );
+        assert.equal(document.querySelector('.mes_text').textContent, '[[sticker:daily:happy]]');
+    });
+});
+
+test('a re-enabled extension renders again', async (t) => {
+    reenable(t);
+    const html = '<p>[[sticker:daily:happy]]</p>';
+    await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks());
+        context.chat = [{ mes: html }];
+        installDomRendering(context);
+        processAllMessages(context);
+        stopRendering(context);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+
+        resumeRendering();
+        processAllMessages(context);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 1);
+    });
+});
+
+test('a re-render follows the chat the client is showing, not the one captured at load', async () => {
+    // `getContext()` hands out a fresh object and rebinds `chat` as the user moves
+    // around, so a context captured when the extension loaded names the chat that
+    // was open then. Re-rendering from that one would restitch the wrong messages
+    // — or, on a settings change, paint the previous chat's stickers over the
+    // current one.
+    const oldHtml = '<p>[[sticker:daily:sad]]</p>';
+    const newHtml = '<p>[[sticker:daily:happy]]</p>';
+    await withChat(
+        message({ mesid: 0, html: oldHtml }) + message({ mesid: 1, html: '<p>nothing</p>' }),
+        ({ document, ...rest }) => {
+            const context = withSettings(rest, defaultPacks());
+            // The context the extension captured: pointed at the old chat.
+            context.chat = [{ mes: oldHtml }, { mes: '<p>nothing</p>' }];
+            installDomRendering(context);
+            processAllMessages(context);
+            assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`)[0].getAttribute('alt'), 'sad');
+
+            // The user switches chats: the live context now names the new one.
+            context.updateMessageBlock = function updateMessageBlock(messageId, chatMessage) {
+                document.querySelector(`.mes[mesid="${messageId}"] .mes_text`).innerHTML = chatMessage.mes;
+            };
+            const liveContext = { ...context, chat: [{ mes: newHtml }, { mes: '<p>nothing</p>' }] };
+            globalThis.SillyTavern = { getContext: () => liveContext };
+            try {
+                rerenderChat(context);
+            } finally {
+                delete globalThis.SillyTavern;
+            }
+            // Message 0 was restitched from the *new* chat's text, so it now shows
+            // `happy`. Had the stale `chat` been used it would still show `sad`.
+            assert.equal(
+                document.querySelectorAll(`img.${STICKER_CLASS}`)[0].getAttribute('alt'),
+                'happy',
+            );
+            // And message 1, which neither chat puts a token in, is untouched.
+            assert.equal(document.querySelectorAll('.mes')[1].querySelector('.mes_text').innerHTML, '<p>nothing</p>');
+        },
+    );
 });

@@ -137,6 +137,25 @@ test('the hook leaves a message outside 处理范围 exactly as it was', () => {
     }
 });
 
+test('the hook leaves a 旁白 line alone, finding it in the chat', () => {
+    // A narrator line is neither a user nor a system message, so the hook
+    // context's flags do not exclude it and the chat has to be consulted. Without
+    // that lookup this is the one 处理范围 case where the two paths disagree, and
+    // it disagrees on ≥1.19 only.
+    const source = '<p>[[sticker:daily:happy]]</p>';
+    client.context.chat = [{ mes: source, extra: { type: 'narrator' } }];
+    assert.equal(hook(source, { messageId: 0, isUser: false, isSystem: false }), source);
+
+    // A different `extra.type` is not a narrator line, and is rendered.
+    client.context.chat = [{ mes: source, extra: { type: 'something-else' } }];
+    assert.match(hook(source, { messageId: 0 }), /<img /);
+
+    // A streaming preview has no entry in the chat at all, so it cannot be one.
+    client.context.chat = [];
+    assert.match(hook(source, { messageId: -1 }), /<img /);
+    client.context.chat = [];
+});
+
 test('disabling makes the hook a pass-through, so later messages come back raw', async (t) => {
     // The hook stays registered on a disabled extension, so the flag is the only
     // thing standing between "disabled" and "still rendering". Without it the

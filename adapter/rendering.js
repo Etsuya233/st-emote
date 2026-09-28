@@ -23,11 +23,14 @@ import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
 import { parseTokenBody, tokenPrefixes } from '../core/token.js';
 import {
     LOG_PREFIX,
+    eachMessageElement,
     effectiveSetForMessage,
     isInScope,
+    liveMessage,
+    logRenderResult,
     renderOptions,
-    reportResult,
 } from './render-common.js';
+import { isRenderingEnabled } from './restore.js';
 
 /**
  * The tag name the sanitizer must let through. A configured sticker tag is not
@@ -113,7 +116,8 @@ function renderStickerElements(textElement, effectiveSet, options) {
         rewritten += 1;
     }
 
-    return reportResult({ misses, invalidSizes }, rewritten);
+    logRenderResult({ misses, invalidSizes });
+    return rewritten;
 }
 
 /**
@@ -152,7 +156,7 @@ function renderTextNodes(textElement, effectiveSet, options) {
     let rewritten = 0;
     for (const node of nodes) {
         const { html, misses, invalidSizes } = renderText(node.data, effectiveSet, options);
-        reportResult({ misses, invalidSizes }, 0);
+        logRenderResult({ misses, invalidSizes });
         if (html === node.data) {
             continue;
         }
@@ -213,18 +217,26 @@ function relocateStickerImages(textElement) {
         return 0;
     }
 
-    const targets = images.map((image) => {
-        const container = nearestBlockAncestorElement(image, textElement);
-        return { image, container, mode: blockBoundaryMode(container?.tagName ?? null) };
-    });
+    const targets = images.map((image) => ({
+        image,
+        placement: image.getAttribute(PLACEMENT_ATTRIBUTE),
+        container: nearestBlockAncestorElement(image, textElement),
+    }));
 
     const anchors = new Map();
-    for (const { image, container, mode } of targets) {
-        if (container === null || mode === 'message-end') {
+    for (const { image, placement, container } of targets) {
+        // 消息末尾 has exactly one destination — the end of the message — and the
+        // block it was written in is irrelevant to that. Deciding on
+        // `blockBoundaryMode` alone would answer "after this paragraph" for a
+        // token inside one, silently turning 消息末尾 into 块后; the placement is
+        // what chooses between the two, and the boundary only chooses *where*
+        // within an 块后.
+        if (placement === 'message-end' || container === null) {
             textElement.append(image);
             image.setAttribute(PLACED_ATTRIBUTE, '1');
             continue;
         }
+        const mode = blockBoundaryMode(container.tagName);
         const previous = anchors.get(container);
         if (mode === 'inside') {
             // A table cell: the image joins the end of the cell's own content.
@@ -257,6 +269,26 @@ function relocateStickerImages(textElement) {
 let domPathInstalled = false;
 
 /**
+ * Whether the DOM pass may run at all. Both conditions are needed, and each
+ * closes a different hole:
+ *
+ * - `domPathInstalled` keeps the pass off a client whose messages the official
+ *   hook already rendered, so a caller that is not path-aware — a settings
+ *   change, a re-enable — cannot walk the chat for nothing.
+ * - `isRenderingEnabled()` keeps the pass off a **disabled** extension. The
+ *   event subscriptions outlive `onDisable` (the client does not reload, and
+ *   unsubscribing would mean remembering every listener), so without this the
+ *   next `CHARACTER_MESSAGE_RENDERED` would put the stickers straight back into
+ *   a chat the user had just turned them off in. The hook path is gated on the
+ *   same flag for the same reason.
+ *
+ * @returns {boolean}
+ */
+function shouldRunDomPass() {
+    return domPathInstalled && isRenderingEnabled();
+}
+
+/**
  * Replace tokens inside one rendered message.
  *
  * Idempotent in both directions, and the second half is what keeps the extension
@@ -270,7 +302,7 @@ let domPathInstalled = false;
  * @returns {number} Number of places that were rewritten.
  */
 export function renderMessageElement(context, messageElement) {
-    if (!domPathInstalled || !messageElement) {
+    if (!shouldRunDomPass() || !messageElement) {
         return 0;
     }
     if (!isInScope(context, messageFactsFromElement(messageElement))) {
@@ -315,11 +347,10 @@ function messageFactsFromElement(messageElement) {
  * @param {any} context
  */
 export function processAllMessages(context) {
-    const chatElement = document.getElementById('chat');
-    if (!domPathInstalled || !chatElement) {
+    if (!shouldRunDomPass()) {
         return;
     }
-    chatElement.querySelectorAll('.mes').forEach((messageElement) => {
+    eachMessageElement((messageElement) => {
         renderMessageElement(context, messageElement);
     });
 }
@@ -331,14 +362,12 @@ export function processAllMessages(context) {
  * @param {any} context
  */
 export function rerenderChat(context) {
-    const chatElement = document.getElementById('chat');
-    const chat = context?.chat;
-    if (!domPathInstalled || !chatElement || !Array.isArray(chat)) {
+    if (!shouldRunDomPass()) {
         return;
     }
-    chatElement.querySelectorAll('.mes').forEach((messageElement) => {
+    eachMessageElement((messageElement) => {
         const messageId = Number(messageElement.getAttribute('mesid'));
-        const message = Number.isInteger(messageId) ? chat[messageId] : null;
+        const message = liveMessage(context, messageId);
         if (message) {
             try {
                 context.updateMessageBlock(messageId, message);

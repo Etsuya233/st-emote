@@ -40,6 +40,11 @@ export function selectRenderPath(context) {
  * client's own formatting, so a message drawn while the extension was active
  * already went through the hook, and a message drawn afterwards will too.
  *
+ * The DOM path is also the fallback. A client that advertises `addHook` but
+ * refuses the call is not a client this extension can do nothing about — the DOM
+ * path works on every version from the floor up, including that one. So the
+ * decision is "prefer the hook", not "require the hook".
+ *
  * Idempotent, because the entry point and the enable hook can both reach this —
  * the client imports the module to call `onEnable`, and the module's own
  * ready-callback also installs. A second install would subscribe every event
@@ -52,17 +57,17 @@ export function installRendering(context) {
     if (activePath) {
         return activePath;
     }
-    activePath = selectRenderPath(context);
     // Both paths need this. The hook path consumes a raw `<sticker>…</sticker>`
     // before the sanitizer runs, so a token it *skips* — an out-of-scope message,
     // or one inside a code block — would otherwise be stripped by DOMPurify,
     // while the DOM path would have shown it. Installing it on both is what
     // keeps "out of scope" looking the same on either client.
     allowStickerTag(ensureSettings(context).stickerTag);
-    if (activePath === 'hook') {
-        installHookRendering(context);
+    if (selectRenderPath(context) === 'hook' && installHookRendering(context)) {
+        activePath = 'hook';
         return activePath;
     }
+    activePath = 'dom';
     installDomRendering(context);
     processAllMessages(context);
     return activePath;

@@ -17,10 +17,12 @@
 
 import { STICKER_HOOK_CLASS, renderHtml, supportsMessageFormatter } from '../core/render.js';
 import {
+    LOG_PREFIX,
     effectiveSetForMessage,
     isInScope,
+    isNarratorMessage,
+    logRenderResult,
     renderOptions,
-    reportResult,
 } from './render-common.js';
 import { isRenderingEnabled } from './restore.js';
 import { liveContext } from './scope.js';
@@ -44,56 +46,89 @@ export function createMessageFormatterHook(context) {
         if (!isRenderingEnabled()) {
             return message;
         }
-        if (!isInScope(context, messageFactsFromHook(hookContext))) {
+
+        const messageId = Number.isInteger(Number(hookContext?.messageId)) ? Number(hookContext.messageId) : -1;
+        if (!isInScope(context, messageFactsFromHook(context, hookContext, messageId))) {
             return message;
         }
 
-        const messageId = Number(hookContext?.messageId);
-        const effectiveSet = effectiveSetForMessage(context, Number.isInteger(messageId) ? messageId : -1);
+        const effectiveSet = effectiveSetForMessage(context, messageId);
         // The un-prefixed name: the sanitizer adds `custom-` to it, which is how
         // this path arrives at the same `custom-st-emote` the DOM path writes.
         const options = renderOptions(context, { className: STICKER_HOOK_CLASS });
 
         const result = renderHtml(message, effectiveSet, options);
-        reportResult(result, 0);
+        logRenderResult(result);
         return result.html;
     };
 }
 
 /**
- * The 处理范围 facts the hook path reads off the hook context. The context is
- * frozen and carries the same distinctions the DOM element does, so both paths
- * hand the pure core's one rule the same shape of answer.
+ * The 处理范围 facts the hook path can read.
  *
+ * The context is frozen and carries the same distinctions the DOM element does,
+ * so both paths hand the pure core's one rule the same shape of answer. The one
+ * it does not carry is 旁白, which is read from the chat instead — see
+ * `isNarratorMessage`.
+ *
+ * @param {any} context
  * @param {any} hookContext
+ * @param {number} messageId
  * @returns {{isUser: boolean, isSystem: boolean, isNarrator: boolean, isReasoning: boolean}}
  */
-function messageFactsFromHook(hookContext) {
+function messageFactsFromHook(context, hookContext, messageId) {
     return {
         isUser: hookContext?.isUser === true,
         isSystem: hookContext?.isSystem === true,
-        // The context has no narrator flag of its own; a narrator line reaches
-        // us as a system message, which the rule already excludes.
-        isNarrator: false,
+        isNarrator: isNarratorMessage(context, messageId),
         isReasoning: hookContext?.isReasoning === true,
     };
 }
 
 /**
+ * The registration options, built from whatever the formatter actually exposes.
+ *
+ * The hook's own default stage is already `afterMarkdown` — which is the stage
+ * this path needs, the one before the sanitizer — so a client that has `addHook`
+ * but not the enums still gets correct placement, just at the default order
+ * rather than early. Better that than refusing to work, or throwing on the way
+ * to a path that would.
+ *
+ * @param {any} messageFormatter
+ * @returns {{stage?: string, order?: number}}
+ */
+function hookOptions(messageFormatter) {
+    const options = {};
+    if (messageFormatter?.stage?.AFTER_MARKDOWN) {
+        options.stage = messageFormatter.stage.AFTER_MARKDOWN;
+    }
+    if (Number.isFinite(messageFormatter?.order?.EARLY)) {
+        options.order = messageFormatter.order.EARLY;
+    }
+    return options;
+}
+
+/**
  * Install the official-hook path.
+ *
+ * Never throws. `addHook` is the feature we detect on, but a client that has it
+ * with a different signature must not take the whole extension down with it —
+ * so a failure is logged and reported, and the caller falls back to the DOM
+ * path, which works on every version from the floor up.
  *
  * @param {any} context
  * @returns {boolean} Whether the hook was installed.
  */
 export function installHookRendering(context) {
-    const live = liveContext(context);
-    const messageFormatter = live?.messageFormatter;
+    const messageFormatter = liveContext(context)?.messageFormatter;
     if (!supportsMessageFormatter(messageFormatter)) {
         return false;
     }
-    messageFormatter.addHook(createMessageFormatterHook(context), {
-        stage: messageFormatter.stage.AFTER_MARKDOWN,
-        order: messageFormatter.order.EARLY,
-    });
-    return true;
+    try {
+        messageFormatter.addHook(createMessageFormatterHook(context), hookOptions(messageFormatter));
+        return true;
+    } catch (error) {
+        console.error(`${LOG_PREFIX} could not install the message formatter hook`, error);
+        return false;
+    }
 }

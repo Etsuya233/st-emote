@@ -54,9 +54,9 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 
 ### 代码布局
 
-- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值都在这里。
-- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一，`render-common.js` 是两条路径共用的一层。
-- `tests/`：纯核心测试 + 契约测试 + DOM 路径测试。
+- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里。
+- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层，`restore.js` 管关闭扩展时的还原。
+- `tests/`：纯核心测试 + 共享契约 + 两条适配层的对照与生命周期测试。
 
 ### 两条渲染路径（ADR-0002）
 
@@ -68,13 +68,16 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 ### 测试
 
 ```bash
-npm test        # node --test，发现并运行 tests/*.test.js
+npm install      # 仅测试需要：装 devDependency jsdom
+npm test         # node --test，发现并运行 tests/*.test.js
 ```
 
-- 纯核心与契约：`tests/render-contract.test.js`（类名、标记还原、处理范围）、`tests/render-paths.test.js`（两条路径跑同一份期望）。
+- **依赖**：测试需要 `npm install`（`jsdom` 是 devDependency，扩展本身不依赖它，也没有构建步骤）。`core/` 仍然不依赖 ST、不依赖 DOM，可以直接用 node 跑；但测试夹具里有 DOM，所以纯核心的测试也经由 `jsdom`。
+- 纯核心与契约：`tests/render-contract.test.js`（类名派生、标记重建、处理范围规则）。
+- **两条路径的对照**：`tests/render-paths.test.js`。两侧都驱动**真实的适配层**——钩子路径走一个录制的 `messageFormatter`，DOM 路径走真的 jsdom 聊天——再把两边结果交给同一个 `assertRendersAs` 和同一份期望表。这才是 ADR-0002 那句话的守门人；拿纯核心跟它自己比什么也证明不了。
 - 共享的断言契约在 `tests/contract/render-contract.js`：只断言最终 DOM 的结构、类名、`data-*` 与尺寸样式，不断言实现方式。里面 `applySanitizerClassPrefix` 是**唯一**模拟的客户端行为（净化补 `custom-` 前缀），需要在 1.19+ 上目视核对。
-- DOM 路径与生命周期：`tests/dom-path.test.js`、`tests/hook-path.test.js`、`tests/entry.test.js`，用 `jsdom`（devDependency）+ `tests/contract/st-dom.js` 里的假客户端。`st-dom.js` 只伪造客户的接口面（`getContext`、事件总线、`updateMessageBlock`），DOM 本身是真的。
-- 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性。
+- 路径与生命周期：`tests/dom-path.test.js`、`tests/hook-path.test.js`、`tests/entry.test.js`。`tests/contract/st-dom.js` 只伪造客户的接口面（`getContext`、事件总线、`updateMessageBlock`），DOM 本身是真的。
+- 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀。
 
 ## 待补充
 

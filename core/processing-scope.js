@@ -1,9 +1,13 @@
 /**
- * Which messages the extension renders at all. One rule, two render paths: the
- * official-hook path reads the facts off the frozen hook context, the DOM path
- * off the message element's attributes, and both hand them here. The paths can
- * only agree about 系统 / 旁白 / 思考链 / 用户消息 if the decision itself is not
- * duplicated per path.
+ * 处理范围 (Processing scope), from `CONTEXT.md`: which messages the extension
+ * renders at all. One rule, two render paths — the official-hook path reads the
+ * facts off the frozen hook context, the DOM path off the message element's
+ * attributes, and both hand them here. The paths can only agree about
+ * 系统 / 旁白 / 思考链 / 用户消息 if the decision itself is not duplicated per
+ * path.
+ *
+ * Not to be confused with 作用域 (Scope), which decides *which 表情包* are
+ * available. That is `core/effective-set.js`.
  */
 
 /**
