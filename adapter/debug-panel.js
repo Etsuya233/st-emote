@@ -16,19 +16,65 @@
  * console, which is where it was always going to be.
  */
 
+import { escapeText } from '../core/escape.js';
 import { buildPreview, formatPreview } from '../core/preview.js';
-import { logInfo } from './log.js';
+import { toast } from './dialogs.js';
 import { currentLocale, tr } from './locale.js';
+import { logInfo } from './log.js';
 import { effectiveSetForMessage, logRenderResult, renderOptions } from './render-common.js';
 import { rerenderChat } from './rendering.js';
-import { toast } from './dialogs.js';
+
+/**
+ * How the client turns raw message text into the HTML the renderer sees, when it
+ * is willing to say.
+ *
+ * SillyTavern runs every message through showdown before anything else looks at
+ * it, and *that* step is what decides whether a token written inside a code fence
+ * renders. The client exposes the very same library it built its own converter
+ * from (`SillyTavern.libs.showdown`), so the preview can use it instead of
+ * guessing — and add no dependency of its own, which is the rule `archive.js`
+ * follows for JSZip.
+ *
+ * **The options are this extension's, not the client's.** The client configures
+ * its own converter for its own purposes and does not publish that
+ * configuration, so what follows is the smallest set that decides the cases the
+ * spec's 解析边界 list actually names: fences, so a token inside one is skipped,
+ * and tables, so a 块后 image lands inside its cell — which the spec calls out as
+ * a deliberate deviation. Everything else is showdown's default. That makes the
+ * preview *very nearly* what the chat produces rather than provably identical to
+ * it, and the panel's hint says so instead of overclaiming.
+ *
+ * A client with no `showdown` on `libs` gets the plain-text floor instead, and
+ * the console says which of the two is in play. `escapeText` is the right floor
+ * and not merely a safe one: it is also what keeps the debug box safe, since the
+ * preview's HTML is the one place this extension writes rendered markup into the
+ * panel.
+ *
+ * @returns {(text: string) => string}
+ */
+function messageBodyPreparer() {
+    const showdown = globalThis.SillyTavern?.libs?.showdown;
+    if (typeof showdown?.Converter !== 'function') {
+        logInfo('no markdown converter on the client; the debug box treats a paste as plain text');
+        return escapeText;
+    }
+    const converter = new showdown.Converter({
+        fencedCodeBlocks: true,
+        tables: true,
+        // No `simpleLineBreaks`: the client's messages are paragraphs, and a
+        // single newline in a model's output is not a line break worth previewing
+        // differently from the chat.
+        simpleLineBreaks: false,
+    });
+    return (text) => converter.makeHtml(text);
+}
 
 /**
  * Mount the debug area's markup into the panel and wire its two controls.
  *
  * The markup is a fixed skeleton with no user data in it, so `innerHTML` is the
  * right tool for it; everything the user types goes in through `textContent` and
- * the preview's own HTML comes out of the core already escaped.
+ * the preview's own HTML comes out of the core.
  *
  * @param {any} context
  * @param {HTMLElement} root - The drawer the panel mounted.
@@ -56,6 +102,7 @@ export function mountDebugSection(context, root) {
 
     const note = section.querySelector('#st_emote_preview_note');
     const output = section.querySelector('#st_emote_preview_out');
+    const toMessageBody = messageBodyPreparer();
 
     runButton.addEventListener('click', () => {
         const preview = buildPreview(
@@ -66,6 +113,7 @@ export function mountDebugSection(context, root) {
             // the preview and the listing agree about what is available.
             effectiveSetForMessage(context, -1),
             renderOptions(context),
+            toMessageBody,
         );
         // The same logging the two render paths do, so a miss in the preview and
         // a miss in the chat are indistinguishable in the console.
@@ -77,9 +125,9 @@ export function mountDebugSection(context, root) {
     });
 
     section.querySelector('#st_emote_rerender').addEventListener('click', () => {
-        rerenderChat(context);
+        const repainted = rerenderChat(context);
         toast('success', tr(context, 'panel.rerendered'));
-        logInfo('re-rendered the current chat on request');
+        logInfo(`repainted the current chat on request (${repainted} message(s))`);
     });
 
     return section;

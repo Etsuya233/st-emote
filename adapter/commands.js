@@ -29,7 +29,7 @@
 import { conflictLogLine, findConflicts, formatConflicts } from '../core/conflict.js';
 import { findPackByName } from '../core/constraints.js';
 import { setPackInScope } from '../core/effective-set.js';
-import { LOG_PREFIX, logInfo } from './log.js';
+import { logError, logInfo } from './log.js';
 import { currentLocale, tr } from './locale.js';
 import { effectiveSetForMessage } from './render-common.js';
 import { rerenderChat } from './rendering.js';
@@ -52,8 +52,24 @@ export const COMMAND_NAME = 'st-emote';
  */
 export const SCOPES = ['global', 'character', 'chat'];
 
-/** The four things the command can do. */
-const ACTIONS = ['enable', 'disable', 'reload', 'conflicts'];
+/**
+ * The four things the command can do.
+ *
+ * Exported because the sentence that lists them is a catalog entry in its own
+ * right — the two spellings that language wants — and `tests/commands.test.js`
+ * checks that the sentence names every action in here. A fifth action added here
+ * without being added to the catalog would otherwise reach a user who mistyped
+ * one, and never be mentioned.
+ */
+export const ACTIONS = ['enable', 'disable', 'reload', 'conflicts'];
+
+/**
+ * `SCOPES` as the user sees them, for the two places that have to say them out.
+ *
+ * A module constant rather than a `join` at each call site, so the help and the
+ * refusal cannot print two different lists if the order ever changes.
+ */
+const SCOPE_LIST = SCOPES.join(', ');
 
 /** Whether the command is registered, so a second call is a no-op. */
 let installed = false;
@@ -96,7 +112,7 @@ export function installCommands(context) {
         installed = true;
         return true;
     } catch (error) {
-        console.error(`${LOG_PREFIX} could not register /${COMMAND_NAME}`, error);
+        logError(`could not register /${COMMAND_NAME}`, error);
         return false;
     }
 }
@@ -128,7 +144,7 @@ function buildNamedArguments(context) {
         }),
         context.SlashCommandNamedArgument.fromProps({
             name: 'scope',
-            description: tr(context, 'command.scopeArgument', { scopes: SCOPES.join(', ') }),
+            description: tr(context, 'command.scopeArgument', { scopes: SCOPE_LIST }),
             typeList: context.ARGUMENT_TYPE.STRING,
         }),
     ];
@@ -183,22 +199,31 @@ export async function runCommand(context, namedArgs = {}, unnamedArgs = []) {
 }
 
 /**
- * Re-read the stored settings and repaint the chat.
+ * Repaint the current chat.
  *
- * A "reload" that only re-read settings would be very nearly a no-op, since they
- * are read fresh on every render anyway. What it is really for is a chat that
- * looks stale — a marker that was missed, a size changed by hand — so the point
- * is the repaint. Saving afterwards is what makes a hand-edited settings file
- * survive the next load.
+ * **It does not re-read the settings, and it does not save them.** Both halves of
+ * that used to be in this function's doc and neither was true: the settings are
+ * read fresh on every render, so "re-reading" them was a no-op, and the
+ * `saveSettingsDebounced` that came with it would have *overwritten* a
+ * hand-edited settings file with whatever was in memory — the exact opposite of
+ * what the sentence claimed to do. So the honest job is the one that is left and
+ * the one users actually want: a chat that looks stale — a marker that was
+ * missed, a size changed by hand, a pack enabled after the fact — gets repainted
+ * from source text. On the hook path that means handing every message back to the
+ * client so its own pipeline runs again; on the DOM path it also re-runs the
+ * token pass over the rebuilt body.
+ *
+ * The name is `reload` because that is what the user is reaching for, and the
+ * repaint is the part of a reload this extension can actually perform: it cannot
+ * reload the client, and it has no way to re-read its own settings off disk.
  *
  * @param {any} context
  * @returns {Promise<string>}
  */
 function reloadStEmote(context) {
-    ensureSettings(context);
-    context.saveSettingsDebounced();
-    rerenderChat(context);
-    return tr(context, 'command.reloaded');
+    const repainted = rerenderChat(context);
+    logInfo(`repainted the current chat on request (${repainted} message(s))`);
+    return tr(context, 'command.repainted', { count: repainted });
 }
 
 /**
@@ -260,7 +285,7 @@ async function setPackEnabledInScope(context, enabled, namedArgs) {
     if (!SCOPES.includes(scope)) {
         return tr(context, 'command.unknownScope', {
             scope: namedArgs?.scope ?? '',
-            scopes: SCOPES.join(', '),
+            scopes: SCOPE_LIST,
         });
     }
     if (scope === 'character' && !getCurrentCharacter(context)) {

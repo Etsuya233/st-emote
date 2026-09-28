@@ -5,11 +5,16 @@
  * everything before it (settings, 生效集, 处理范围) and the logging after it
  * live here and are shared. If either path grew its own copy of one of these,
  * "the paths behave identically" would be a claim nothing kept true.
+ *
+ * `restitchChat` is here for exactly that reason and is the one piece of this
+ * module that *reaches into* the client: asking it to re-format a message is the
+ * only repaint that works on both paths, because it re-runs the client's whole
+ * formatting pipeline, and on the hook path the pipeline is what drives us.
  */
 
 import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import { shouldRenderMessage } from '../core/processing-scope.js';
-import { LOG_PREFIX, logInfo } from './log.js';
+import { logError, logInfo } from './log.js';
 import { ensureSettings } from './settings.js';
 import {
     getCharacterScopeForAvatar,
@@ -17,8 +22,6 @@ import {
     getCurrentCharacterScope,
     liveContext,
 } from './scope.js';
-
-export { LOG_PREFIX };
 
 /**
  * The client's `system_message_types.NARRATOR`, which is what marks a 旁白 line.
@@ -170,6 +173,51 @@ export function eachMessageElement(visit) {
         visit(messageElement);
     }
     return messages.length;
+}
+
+/**
+ * Hand every message on screen back to the client to re-format.
+ *
+ * **This is the repaint that works on both paths**, and it is the reason the
+ * function is here rather than in either path. `updateMessageBlock` re-runs the
+ * client's own formatting over the message's *source text* and replaces the
+ * message body with the result — and that pipeline is where the official hook
+ * lives. So on ST ≥ 1.19 the stickers come back because the hook ran again, and
+ * on 1.15.0–1.18.x the body is rebuilt with the raw markers in it, ready for the
+ * DOM pass to pick up.
+ *
+ * Walking the DOM rather than the chat is the same choice `restore.js` makes and
+ * for the same reason: a message can be on screen without being in the chat — a
+ * streaming preview, a message not yet sent — and a repaint that skipped those
+ * would leave the oldest stale image in the chat being the one nobody refreshed.
+ *
+ * Iterating the nodes also means the list cannot change underneath the walk: the
+ * client replaces `.mes_text`, never the `.mes` element, so a `NodeList` taken
+ * once stays valid. A message the chat has no entry for is simply not restitched,
+ * because there is no source text to restitch it from.
+ *
+ * @param {any} context
+ * @returns {number} How many messages were handed back.
+ */
+export function restitchChat(context) {
+    if (typeof context?.updateMessageBlock !== 'function') {
+        return 0;
+    }
+    let restitched = 0;
+    eachMessageElement((messageElement) => {
+        const messageId = Number(messageElement.getAttribute('mesid'));
+        const message = liveMessage(context, messageId);
+        if (!message) {
+            return;
+        }
+        try {
+            context.updateMessageBlock(messageId, message);
+            restitched += 1;
+        } catch (error) {
+            logError(`failed to re-render message ${messageId}`, error);
+        }
+    });
+    return restitched;
 }
 
 /**

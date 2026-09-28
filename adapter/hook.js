@@ -17,7 +17,6 @@
 
 import { STICKER_HOOK_CLASS, renderHtml, supportsMessageFormatter } from '../core/render.js';
 import {
-    LOG_PREFIX,
     effectiveSetForMessage,
     isInScope,
     isNarratorMessage,
@@ -25,6 +24,7 @@ import {
     renderOptions,
 } from './render-common.js';
 import { isRenderingEnabled } from './restore.js';
+import { logError } from './log.js';
 import { liveContext } from './scope.js';
 
 /**
@@ -128,7 +128,7 @@ export function installHookRendering(context) {
         messageFormatter.addHook(createMessageFormatterHook(context), hookOptions(messageFormatter));
         return true;
     } catch (error) {
-        console.error(`${LOG_PREFIX} could not install the message formatter hook`, error);
+        logError('could not install the message formatter hook', error);
         return false;
     }
 }

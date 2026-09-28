@@ -8,7 +8,7 @@
  * 1.18 but silently does nothing on 1.15" from being a per-call-site surprise.
  */
 
-import { LOG_PREFIX } from './render-common.js';
+import { logInfo } from './log.js';
 import { liveContext } from './scope.js';
 
 /**
@@ -21,7 +21,7 @@ export function toast(kind, message) {
         toastr[kind](message, 'st-emote');
         return;
     }
-    console.info(`${LOG_PREFIX} ${message}`);
+    logInfo(message);
 }
 
 /**

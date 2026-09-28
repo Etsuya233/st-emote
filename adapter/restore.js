@@ -13,7 +13,7 @@
  */
 
 import { STICKER_CLASS, TOKEN_ATTRIBUTE } from '../core/render.js';
-import { LOG_PREFIX, eachMessageElement, liveMessage } from './render-common.js';
+import { eachMessageElement, restitchChat } from './render-common.js';
 import { liveContext } from './scope.js';
 
 /**
@@ -54,43 +54,6 @@ export function restoreMessageText(context) {
 }
 
 /**
- * Re-render each message from its source text, which is the client's own job and
- * gives back the message exactly as it was written.
- *
- * This is the faithful half of the restore, and it is what puts a 块后 or
- * 消息末尾 image's marker back *inside* its paragraph: swapping the image for
- * its marker in place can only put it back where the image now is, and a
- * relocated image is no longer where the model wrote it. The source text has the
- * position; the DOM does not.
- *
- * The hook is already a pass-through by the time this runs, so a message
- * restitched this way comes back with its raw markers on the hook path too.
- *
- * @param {any} [context]
- * @returns {number} Number of messages re-rendered.
- */
-function restitchMessages(context) {
-    if (typeof context?.updateMessageBlock !== 'function') {
-        return 0;
-    }
-    let restitched = 0;
-    eachMessageElement((messageElement) => {
-        const messageId = Number(messageElement.getAttribute('mesid'));
-        const message = liveMessage(context, messageId);
-        if (!message) {
-            return;
-        }
-        try {
-            context.updateMessageBlock(messageId, message);
-            restitched += 1;
-        } catch (error) {
-            console.error(`${LOG_PREFIX} failed to restore message ${messageId}`, error);
-        }
-    });
-    return restitched;
-}
-
-/**
  * Whether the extension is currently rendering, tracked so the way out knows
  * whether there is anything to undo. Held here rather than in the render paths
  * because both of them need it: the DOM path stops walking the chat, and the
@@ -110,9 +73,24 @@ export function isRenderingEnabled() {
  *
  * The flag goes first, so nothing re-renders a sticker while the undo is running
  * and nothing puts an image back after it. Then the two halves of the restore,
- * faithful first: re-render the messages the chat knows about from their source
- * text, then swap any image left over — a streaming preview, a message the chat
- * has no entry for — back to its marker.
+ * faithful first, then the blunt one:
+ *
+ * 1. **Restitch** — hand each message the chat knows about back to the client to
+ *    be re-rendered from its source text. This is the faithful half, and it is
+ *    what puts a 块后 or 消息末尾 image's marker back *inside* its paragraph:
+ *    swapping the image for its marker in place can only put it back where the
+ *    image now is, and a relocated image is no longer where the model wrote it.
+ *    The source text has the position; the DOM does not. The hook is already a
+ *    pass-through by the time this runs, so a message restitched this way comes
+ *    back with its raw markers on the hook path too.
+ * 2. **Swap** — put the marker back on any image left over, a streaming preview
+ *    or a message the chat has no entry for, which step 1 could not reach.
+ *
+ * Step 1 is `restitchChat` from `render-common.js` rather than a second copy of
+ * that walk, because `/st-emote reload` and the panel's re-render button need the
+ * identical repaint: asking the client to re-format a message is what brings
+ * stickers back on the hook path, and a second copy would be a second thing to
+ * keep working.
  *
  * @param {any} [context]
  * @returns {number} Number of images that were put back.
@@ -120,7 +98,7 @@ export function isRenderingEnabled() {
 export function stopRendering(context) {
     renderingEnabled = false;
     const live = liveContext(context) ?? context;
-    restitchMessages(live);
+    restitchChat(live);
     return restoreMessageText(live);
 }
 

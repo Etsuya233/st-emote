@@ -14,10 +14,11 @@
  * sentence could be written. Which language those sentences come from is
  * `adapter/locale.js`'s one fact, read once at mount.
  *
- * The static skeleton is assembled with `innerHTML` because it is fixed markup
- * with no user data in it; anything the user typed or named goes in through
- * `textContent`, or through `trHtml` where a sentence has to be assembled into
- * markup alongside a pack name.
+ * The fixed skeleton is assembled with `innerHTML`, because it is markup with no
+ * user data in it. Everything the user typed or named goes in through
+ * `textContent`, and the two places a sentence sits beside a code sample build
+ * the sample as its own element — which is also why there is no escaping lookup
+ * here: a value that never reaches `innerHTML` cannot need escaping.
  */
 
 import {
@@ -52,7 +53,7 @@ import { buildPackArchive, downloadBlob, readPackArchive } from './archive.js';
 import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
 import { currentLocale, tr } from './locale.js';
-import { LOG_PREFIX } from './log.js';
+import { logError } from './log.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
 import { clearContextRegexJson } from './regex.js';
 import { buildStickerPlacementSelect, mountSizingSection } from './sizing-panel.js';
@@ -323,7 +324,7 @@ export function mountSettingsPanel(context) {
             await copyText(regexBlock.textContent);
             toast('success', tr(context, 'panel.regexCopied'));
         } catch (error) {
-            console.error(`${LOG_PREFIX} failed to copy regex JSON`, error);
+            logError('failed to copy regex JSON', error);
             toast('error', tr(context, 'panel.regexCopyFailed'));
         }
     });
@@ -992,7 +993,7 @@ async function handleUploads(context, pack, files, refresh) {
         try {
             sticker.image = await uploadStickerImage(context, file, sticker.id, currentLocale(context));
         } catch (error) {
-            console.error(`${LOG_PREFIX} upload failed for ${file.name}`, error);
+            logError(`upload failed for ${file.name}`, error);
             toast('error', tr(context, 'upload.failed', { name: file.name, reason: error.message }));
             continue;
         }
@@ -1069,7 +1070,7 @@ async function replaceStickerImageWithFile(context, pack, sticker, refresh, file
     try {
         stored = await uploadStickerImage(context, chosen, sticker.id, currentLocale(context));
     } catch (error) {
-        console.error(`${LOG_PREFIX} could not replace the image of ${sticker.id}`, error);
+        logError(`could not replace the image of ${sticker.id}`, error);
         toast('error', tr(context, 'image.replaceFailed', { reason: error.message }));
         return;
     }
@@ -1221,7 +1222,7 @@ async function handleExport(context, pack) {
         downloadBlob(blob, fileName);
         toast('success', tr(context, 'export.done', { name: pack.name, count }));
     } catch (error) {
-        console.error(`${LOG_PREFIX} could not export "${pack.name}"`, error);
+        logError(`could not export "${pack.name}"`, error);
         toast('error', tr(context, 'export.failed', { name: pack.name, reason: error.message }));
     }
 }
@@ -1242,7 +1243,7 @@ async function handleImport(context, file, refresh) {
     try {
         archive = await readPackArchive(file);
     } catch (error) {
-        console.error(`${LOG_PREFIX} could not read ${file.name}`, error);
+        logError(`could not read ${file.name}`, error);
         toast('error', tr(context, 'import.readFailed', { name: file.name, reason: error.message }));
         return;
     }
@@ -1279,7 +1280,7 @@ async function handleImport(context, file, refresh) {
             );
             stored += 1;
         } catch (error) {
-            console.error(`${LOG_PREFIX} could not store ${upload.path} from ${file.name}`, error);
+            logError(`could not store ${upload.path} from ${file.name}`, error);
             toast('warning', tr(context, 'upload.failed', { name: upload.path, reason: error.message }));
         }
     }
@@ -1310,7 +1311,7 @@ async function deleteImageQuietly(context, path) {
     try {
         await deleteStickerImage(context, path);
     } catch (error) {
-        console.error(`${LOG_PREFIX} could not delete ${path}`, error);
+        logError(`could not delete ${path}`, error);
     }
 }
 

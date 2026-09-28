@@ -59,6 +59,10 @@ const CATALOGUE = {
  * @param {string[]} [options.storedFiles] - File names the server reports.
  * @param {object} [options.fetch] - A `fakeFetch` replacement.
  * @param {string} [options.locale] - The locale the client reports.
+ * @param {object} [options.sillyTavern] - The client's global, installed **before**
+ *   the panel mounts. The debug area reads `SillyTavern.libs` while mounting,
+ *   which is when the real client has it too, so a test cannot add it afterwards
+ *   and expect the converter to appear.
  * @param {(context: any) => void|Promise<void>} body
  */
 async function withPanelMounted(options, body) {
@@ -77,6 +81,10 @@ async function withPanelMounted(options, body) {
         });
         const savedFetch = globalThis.fetch;
         globalThis.fetch = fetchImpl;
+        const savedClient = globalThis.SillyTavern;
+        if (options?.sillyTavern) {
+            globalThis.SillyTavern = options.sillyTavern;
+        }
         const toasts = [];
         globalThis.window.toastr = {
             success: (message) => toasts.push(['success', message]),
@@ -91,6 +99,7 @@ async function withPanelMounted(options, body) {
             await body({ ...harness, toasts, fetchImpl });
         } finally {
             globalThis.fetch = savedFetch;
+            globalThis.SillyTavern = savedClient;
             delete globalThis.window.toastr;
         }
     }, { locale: options?.locale });
@@ -669,6 +678,74 @@ test('the re-render button repaints the chat and says so', async () => {
         assert.equal(toasts.at(-1)[0], 'success');
         assert.match(toasts.at(-1)[1], /Re-rendered the current chat/);
     });
+});
+
+test('the debug box hands the paste through the client\'s own markdown step', async () => {
+    // The renderer only knows about HTML, and a code fence only becomes
+    // `<pre><code>` after markdown runs — so the converter is what decides
+    // whether a token inside a fence renders. The adapter must supply the
+    // client's own showdown rather than guess, and the global has to be in place
+    // before the panel mounts, which is when the real client has it too.
+    const converterOptions = [];
+    let shown = '';
+    await withPanelMounted({
+        sillyTavern: {
+            libs: {
+                showdown: {
+                    Converter: class {
+                        constructor(options) {
+                            converterOptions.push(options);
+                        }
+
+                        makeHtml(text) {
+                            return `<p>${text}</p>`;
+                        }
+                    },
+                },
+            },
+        },
+    }, async ({ document }) => {
+        const box = document.getElementById('st_emote_preview');
+        box.value = 'a [[sticker:daily:happy]]';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+        shown = document.getElementById('st_emote_preview_out').innerHTML;
+    });
+
+    // The converter was used, and configured for the cases the spec's 解析边界
+    // list names: a fence is skipped, and a table cell holds its own 块后 image.
+    assert.deepEqual(converterOptions, [{
+        fencedCodeBlocks: true,
+        tables: true,
+        simpleLineBreaks: false,
+    }]);
+    // And its output is what got rendered, rather than the raw paste.
+    assert.match(shown, /^<p>a <img /);
+    assert.match(shown, /<\/p>$/);
+});
+
+test('a client with no markdown converter falls back to treating a paste as text', async () => {
+    // The fallback has to be a *stated* one, not a silent degradation: the hint
+    // tells the user the paste is plain text and that a fence is not honoured.
+    let probe = null;
+    await withPanelMounted({}, async ({ document }) => {
+        const box = document.getElementById('st_emote_preview');
+        box.value = '**bold** [[sticker:daily:happy]]';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+        probe = {
+            output: document.getElementById('st_emote_preview_out').innerHTML,
+            hint: document.querySelector('.st-emote-debug .st-emote-hint').textContent,
+        };
+    });
+
+    // `escapeText` escapes `& < >` and nothing else, so `**bold**` survives as the
+    // literal text the user typed — which is exactly the proof: markdown was not
+    // turned into an element, because nothing converted it.
+    assert.match(probe.output, /^\*\*bold\*\* <img /);
+    assert.equal(probe.output.includes('<strong>'), false);
+    assert.match(probe.hint, /plain text/i);
+    assert.match(probe.hint, /code fence/i);
 });
 
 /**

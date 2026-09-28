@@ -15,12 +15,11 @@
  * language change, and its own language switch reloads the page, so a panel built
  * during load is rebuilt in the new language anyway.
  *
- * There is no `trHtml` here on purpose. `core/i18n.js` has one for the case where
- * a sentence is assembled into markup beside a value the *user* supplied, and the
- * panel has no such case: it puts the prose through `textContent` and builds the
- * two or three places it wants a `<code>` sample as their own elements. If a
- * future sentence does need assembling, reach for `tHtml` from the core rather
- * than adding a second lookup path here.
+ * There is no escaped sibling to this lookup, and there is no reason for one.
+ * Every surface applies a sentence with `textContent`, so a value that came from
+ * the user is never in a markup position to begin with; if one ever is,
+ * `escapeText` belongs at that call site, where a reader can see what is being
+ * assembled.
  */
 
 import { DEFAULT_LOCALE, t } from '../core/i18n.js';

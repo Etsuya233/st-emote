@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CATALOGS, DEFAULT_LOCALE, resolveLocale, t, tHtml, tKeys } from '../core/i18n.js';
+import { CATALOGS, DEFAULT_LOCALE, resolveLocale, t, tKeys } from '../core/i18n.js';
 
 test('every locale covers exactly the keys the English source defines', () => {
     const english = tKeys(DEFAULT_LOCALE).sort();
@@ -135,11 +135,86 @@ test('every miss reason has a sentence, because the debug area names them', () =
     }
 });
 
-test('an interpolated value is escaped by tHtml and left alone by t', () => {
-    // The two lookups differ only in the values, and only tHtml is allowed to be
-    // handed something that came from the user.
+test('an interpolated value is substituted, and the lookup does not escape it', () => {
+    // The panel applies every sentence with `textContent`, so the lookup has no
+    // escaping step and none is wanted here: escaping at the lookup would make
+    // the same sentence read as `&lt;img` in a toast.
     const values = { name: '<img src=x onerror=alert(1)>' };
-    assert.match(tHtml('pack.nameTaken', 'en', values), /&lt;img/);
     assert.match(t('pack.nameTaken', 'en', values), /<img/);
+    assert.match(t('pack.nameTaken', 'zh-cn', values), /<img/);
+});
+
+test('the catalog carries no value nobody can reach', () => {
+    // A key defined in both catalogs and read by nothing is a sentence that will
+    // never be corrected, because the failure it was written for is one nobody
+    // can see happening. The list is the set of keys the code actually looks up;
+    // a key added to a catalog has to be added here too, or this fails.
+    const used = new Set([
+        'panel.intro', 'panel.introTokenCaption', 'panel.tokenExample',
+        'panel.renderUser', 'panel.tagName', 'panel.sizeHint', 'panel.newPackName',
+        'panel.createPack', 'panel.missingPackHeader', 'panel.createMissingPacks',
+        'panel.missingPacksCreated', 'panel.noPacks', 'panel.noStickerMatches',
+        'panel.searchPlaceholder', 'panel.importPack', 'panel.transferHint',
+        'panel.macroHint', 'panel.macroExample', 'panel.regexHint', 'panel.copyRegex',
+        'panel.regexCopied', 'panel.regexCopyFailed', 'panel.debugHint',
+        'panel.previewPlaceholder', 'panel.previewRun', 'panel.previewEmpty',
+        'panel.previewMisses', 'panel.rerender', 'panel.rerendered',
+        'pack.uploadImages', 'pack.addImageUrl', 'pack.exportZip', 'pack.deletePack',
+        'pack.stickerCount', 'pack.stateEmpty', 'pack.stateEmptyTitle',
+        'pack.stateImagesMissing', 'pack.stateImagesMissingTitle', 'pack.coverRepoint',
+        'pack.selectAllTitle', 'pack.selectAll', 'pack.selectMatches',
+        'pack.selectedCount', 'pack.deleteSelected', 'pack.searchDeleteHint',
+        'pack.renamed', 'pack.nameTaken',
+        'sticker.selectForDelete', 'sticker.labelPlaceholder', 'sticker.unlabeled',
+        'sticker.external', 'sticker.externalTitle', 'sticker.replace', 'sticker.delete',
+        'sticker.renamed', 'sticker.labelTaken',
+        'scope.global', 'scope.character', 'scope.chat',
+        'placement.in-place', 'placement.after-block', 'placement.message-end',
+        'placement.follow', 'placement.override', 'placement.label',
+        'size.inline', 'size.block', 'size.minWidth', 'size.minHeight', 'size.maxWidth',
+        'size.maxHeight', 'size.fit', 'size.fitDefault', 'size.invalidHint',
+        'constraint.packName', 'constraint.label', 'constraint.description',
+        'constraint.htmlTag', 'constraint.reason.empty', 'constraint.reason.too-long',
+        'constraint.reason.forbidden-character', 'constraint.reason.newline',
+        'constraint.reason.colon', 'constraint.reason.invalid',
+        'constraint.reason.reserved', 'constraint.reason.unknown',
+        'upload.tooLarge', 'upload.unsupportedFormat', 'upload.failed', 'upload.done',
+        'upload.tooTall', 'url.prompt', 'url.empty', 'url.malformed', 'url.added',
+        'image.replaced', 'image.set', 'image.replaceFailed',
+        'delete.sticker', 'delete.stickerUnnamed', 'delete.selected', 'delete.pack',
+        'delete.packDone', 'export.done', 'export.failed', 'export.imageMissing',
+        'import.readFailed', 'import.done', 'import.reason.unknown',
+        'listing.empty', 'conflict.header', 'conflict.none', 'conflict.row',
+        'conflict.logLine', 'command.repainted', 'command.enabled', 'command.disabled',
+        'command.unknownScope', 'command.unknownPack', 'command.noCharacter',
+        'command.packArgument', 'command.scopeArgument', 'command.needPack',
+        'command.needAction', 'command.conflictsShown', 'command.returns', 'command.help',
+        'macro.missing', 'macro.description', 'macro.returns', 'macro.modeDescription',
+    ]);
+    // Keys assembled from another value's name, so they cannot be listed here.
+    for (const reason of [
+        'pack-not-found', 'pack-not-enabled', 'label-not-found', 'ambiguous-bare-label',
+        'image-missing', 'external-link-failed',
+    ]) {
+        used.add(`miss.reason.${reason}`);
+    }
+    for (const reason of [
+        'not-a-zip', 'no-manifest', 'not-a-pack', 'unsupported-version', 'name-taken',
+        'missing-image', 'unsupported-format', 'image-too-large', 'not-json',
+        'invalid-name', 'invalid-stickers', 'invalid-sticker', 'duplicate-label',
+        'invalid-label', 'invalid-description', 'invalid-placement', 'invalid-image',
+        'unsafe-file', 'invalid-url',
+    ]) {
+        used.add(`import.reason.${reason}`);
+    }
+    // And the singular variants, which `t` reaches by appending `.one`.
+    for (const key of [...used]) {
+        if (CATALOGS.en[`${key}.one`] !== undefined) {
+            used.add(`${key}.one`);
+        }
+    }
+
+    const orphans = tKeys(DEFAULT_LOCALE).filter((key) => !used.has(key));
+    assert.deepEqual(orphans, [], 'catalogued but never read');
 });
 

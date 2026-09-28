@@ -143,10 +143,6 @@ export function downloadBlob(blob, fileName) {
 }
 
 /**
- * @param {string} path
- * @returns {Promise<Uint8Array>}
- */
-/**
  * The bytes of one stored image, or a refusal naming the file.
  *
  * The refusal is a catalog sentence rather than developer text because the panel

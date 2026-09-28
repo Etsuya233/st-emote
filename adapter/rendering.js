@@ -23,13 +23,12 @@ import {
 import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
 import { parseTokenBody, tokenPrefixes } from '../core/token.js';
 import {
-    LOG_PREFIX,
     eachMessageElement,
     effectiveSetForMessage,
     isInScope,
-    liveMessage,
     logRenderResult,
     renderOptions,
+    restitchChat,
 } from './render-common.js';
 import { isRenderingEnabled } from './restore.js';
 import { logInfo } from './log.js';
@@ -358,27 +357,47 @@ export function processAllMessages(context) {
 }
 
 /**
- * Re-render the current chat from its source text, then replace tokens again.
- * Used after settings change so previously hidden misses come back.
+ * Repaint the current chat: every message goes back to the client to be
+ * re-formatted from its source text, and then — on the DOM path only — the token
+ * pass runs over the freshly rebuilt body.
+ *
+ * The two halves are separate because the **restitch is what works on both
+ * paths**. `updateMessageBlock` re-runs the client's whole formatting pipeline,
+ * and on ST ≥ 1.19 the official hook is a stage of that pipeline: restitching a
+ * message is what brings its stickers back, with no help from us. On 1.15.0 –
+ * 1.18.x the pipeline has no hook in it, so the body comes back holding its raw
+ * markers and the DOM pass turns them into images again.
+ *
+ * That is why this used to be a no-op on the hook path, and why it must not be
+ * again: gating the *whole* repaint on "is this the DOM path" left the panel's
+ * re-render button and `/st-emote reload` reporting a repaint they had not
+ * performed. The DOM pass keeps its own gate (`shouldRunDomPass`, inside
+ * `renderMessageElement`), which is where that decision belongs.
+ *
+ * Repaints from source text rather than from the current DOM on purpose: an
+ * image already standing in for a token cannot be turned back into a token
+ * without the source, and a 块后 image in particular would land in the wrong place
+ * if the only thing that happened was a second pass over the nodes.
+ *
+ * Does nothing at all while the extension is disabled. The hook is a
+ * pass-through then, so a restitch would produce the right text at the cost of
+ * walking every message, and the DOM pass is gated off regardless.
  *
  * @param {any} context
+ * @returns {number} How many messages were handed back to the client.
  */
 export function rerenderChat(context) {
-    if (!shouldRunDomPass()) {
-        return;
+    if (!isRenderingEnabled()) {
+        return 0;
+    }
+    const restitched = restitchChat(context);
+    if (!domPathInstalled) {
+        return restitched;
     }
     eachMessageElement((messageElement) => {
-        const messageId = Number(messageElement.getAttribute('mesid'));
-        const message = liveMessage(context, messageId);
-        if (message) {
-            try {
-                context.updateMessageBlock(messageId, message);
-            } catch (error) {
-                console.error(`${LOG_PREFIX} failed to re-render message ${messageId}`, error);
-            }
-        }
         renderMessageElement(context, messageElement);
     });
+    return restitched;
 }
 
 /**

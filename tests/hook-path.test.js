@@ -34,6 +34,39 @@ import {
     withSettings,
 } from './contract/st-dom.js';
 
+/**
+ * The client's own re-render, modelled the way a 1.19+ client behaves: re-run the
+ * message through the formatting pipeline — which is where our hook lives —
+ * sanitize the result, and replace the message body.
+ *
+ * Modelling it this way rather than as a plain assignment is the point: it is what
+ * turns "a re-render brings the stickers back on the hook path" into a testable
+ * claim instead of an assumption. The `st-dom` harness's stand-in is deliberately
+ * simpler — it assigns the source text straight back — because most render tests
+ * would rather not have a formatter in the way.
+ *
+ * @param {{callback: Function}} [registered] - The recorded hook, when the caller
+ *   has one; defaults to the module's, for callers that only need the behaviour.
+ * @returns {(messageId: number, message: {mes: string, is_user?: boolean}) => void}
+ */
+function restitchThroughTheHook(registered = { callback: hook }) {
+    return (messageId, message) => {
+        const element = document.querySelector(`.mes[mesid="${messageId}"]`);
+        if (!element) {
+            return;
+        }
+        const rendered = registered.callback(message.mes, {
+            messageId,
+            isUser: message.is_user === true,
+        });
+        // The sanitizer's `custom-` prefix — the one client behaviour the shared
+        // contract models.
+        element.querySelector('.mes_text').innerHTML = applySanitizerClassPrefix(
+            parseHtml(rendered),
+        ).innerHTML;
+    };
+}
+
 /** A context shaped like a 1.19+ client's, with a recording formatter. */
 function createHookClient() {
     const registered = [];
@@ -50,6 +83,9 @@ function createHookClient() {
             addHook(callback, options) {
                 registered.push({ callback, options });
             },
+        },
+        updateMessageBlock(messageId, message) {
+            restitchThroughTheHook(registered)(messageId, message);
         },
     };
     withSettings(context, defaultPacks());
@@ -79,14 +115,59 @@ test('installing again does not register a second hook', () => {
 });
 
 test('the DOM post-processing never runs for a client that only has the hook', async () => {
-    // A caller that is not path-aware — a settings change, a re-enable — must not
-    // walk the chat on a client whose messages the hook already rendered. The
-    // guard sits at the seam rather than being left to each caller to check.
+    // A caller that is not path-aware — a settings change, a re-render — must not
+    // walk the chat *itself* on a client whose messages the hook already rendered.
+    // The guard sits at the seam rather than being left to each caller to check.
+    // (What the repaint does on this path is the next test; here we are only
+    // asking that we did not reach for the DOM pass.)
     await withChat(message({ mesid: 0, html: '<p>[[sticker:daily:happy]]</p>' }), ({ document, ...rest }) => {
         const context = { ...rest, chat: [{ mes: '<p>[[sticker:daily:happy]]</p>' }] };
         assert.equal(renderMessageElement(context, document.querySelector('.mes')), 0);
         processAllMessages(context);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+    });
+});
+
+test('a re-render really does repaint the chat on the hook path', async () => {
+    // The regression: `rerenderChat` used to bail out unless the DOM pass was
+    // installed, so on ≥1.19 it did nothing at all — while the panel's
+    // re-render button and `/st-emote reload` both reported that they had
+    // repainted the chat. Restitching is the repaint that works on both paths,
+    // because it re-runs the client's pipeline and the hook is a stage of it.
+    const source = '<p>a [[sticker:daily:happy]] b</p>';
+    await withChat(message({ mesid: 0, html: source }), ({ document, ...rest }) => {
+        // The one difference from the harness's context: this client's re-render
+        // runs its own formatting pipeline, which is where the hook lives.
+        const context = {
+            ...rest,
+            chat: [{ mes: source }],
+            updateMessageBlock: restitchThroughTheHook(),
+        };
+        const textElement = document.querySelector('.mes_text');
+
+        // Start from a chat the hook never ran over: the markers are still text.
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+
+        const repainted = rerenderChat(context);
+
+        assert.equal(repainted, 1, 'no message was handed back to the client');
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 1);
+        assert.equal(textElement.textContent, 'a  b');
+
+        // And it is idempotent, because the client rebuilds the body from source
+        // text every time rather than from whatever we last wrote.
         rerenderChat(context);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 1);
+    });
+});
+
+test('a re-render on a disabled extension leaves the markers as they are', async (t) => {
+    t.after(resumeRendering);
+    const source = '<p>a [[sticker:daily:happy]] b</p>';
+    await withChat(message({ mesid: 0, html: source }), ({ document, ...rest }) => {
+        const context = { ...rest, chat: [{ mes: source }] };
+        stopRendering(context);
+        assert.equal(rerenderChat(context), 0);
         assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
     });
 });

@@ -70,7 +70,10 @@ export function installMacro(context) {
         return;
     }
     if (typeof context.registerMacro !== 'function') {
-        logInfo(`no macro API available; {{${MACRO_NAME}}} will not expand.`);
+        // The one console line about the macro is a fact about the user's own
+        // setup — their preset writes a macro that is never going to expand — so
+        // it is catalogued rather than a second English string living here.
+        logInfo(t('macro.missing', locale));
         return;
     }
     context.registerMacro(

@@ -16,9 +16,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { installCommands, runCommand, SCOPES } from '../adapter/commands.js';
+import { installCommands, runCommand, ACTIONS, SCOPES } from '../adapter/commands.js';
+import { t } from '../core/i18n.js';
 import { STORAGE_KEY } from '../adapter/settings.js';
-import { withChat } from './contract/st-dom.js';
+import { message, withChat } from './contract/st-dom.js';
 
 /** Two packs, one of which collides with the other on `happy`. */
 const CATALOGUE = {
@@ -61,20 +62,61 @@ function withCharacter() {
  * @param {Record<string, string>} [namedArgs]
  * @returns {Promise<{result: string, context: any, logs: string[]}>}
  */
+/**
+ * Run one command against a jsdom-backed context.
+ *
+ * @param {object} [options]
+ * @param {object} [options.character] - Character to select, from `withCharacter`.
+ * @param {object} [options.settings] - Settings overrides, merged into the fixture.
+ * @param {string} [options.locale]
+ * @param {string} [options.action]
+ * @param {string} [options.chatHtml] - Message body for the chat, when a test
+ *   needs a repaint to have something to repaint.
+ * @param {Record<string, string>} [namedArgs]
+ * @param {any[]} [options.unnamedArgs] - The whole unnamed list, when a test
+ *   needs to pass something the single-`action` shorthand cannot — an action plus
+ *   an argument that has to be ignored, say.
+ * @returns {Promise<{result: string, context: any, logs: string[], saves: number, restitched: number}>}
+ */
 async function run(options = {}) {
     let outcome;
-    await withChat('', async (harness) => {
-        const context = { ...harness, ...(options.character ?? {}), getCurrentLocale: () => options.locale ?? 'en' };
+    const chatHtml = options.chatHtml
+        ? message({ mesid: 0, html: options.chatHtml })
+        : '';
+    const chatEntries = options.chatHtml ? [{ mes: options.chatHtml }] : [];
+    await withChat(chatHtml, async (harness) => {
+        const context = {
+            ...harness,
+            ...(options.character ?? {}),
+            getCurrentLocale: () => options.locale ?? 'en',
+        };
         context.extensionSettings[STORAGE_KEY] = {
             ...structuredClone(CATALOGUE),
             ...(options.settings ?? {}),
         };
+        let saves = 0;
+        const saveSettingsDebounced = context.saveSettingsDebounced;
+        context.saveSettingsDebounced = () => {
+            saves += 1;
+            saveSettingsDebounced();
+        };
+        // The client's re-render, counted, because "the repaint happened" is a
+        // claim about this call happening — not about the text that came out.
+        // `call` with the context, because the harness's stand-in is a method.
+        let restitched = 0;
+        const updateMessageBlock = context.updateMessageBlock;
+        context.updateMessageBlock = function countedUpdateMessageBlock(id, msg) {
+            restitched += 1;
+            return updateMessageBlock.call(this, id, msg);
+        };
+        context.chat = chatEntries;
         const saved = console.info;
         const logs = [];
         console.info = (...parts) => logs.push(parts.join(' '));
         try {
-            const result = await runCommand(context, options.namedArgs ?? {}, [options.action]);
-            outcome = { result, context, logs };
+            const args = options.unnamedArgs ?? [options.action];
+            const result = await runCommand(context, options.namedArgs ?? {}, args);
+            outcome = { result, context, logs, saves, restitched };
         } finally {
             console.info = saved;
         }
@@ -104,7 +146,10 @@ test('a client with no slash command parser says so rather than failing silently
 });
 
 test('the command registers itself once, with the three scopes named', async () => {
-    let registered = null;
+    // The fake **records** every registration rather than keeping the last one:
+    // an overwrite would let a double registration pass unnoticed, and a command
+    // registered twice runs every action twice for one keystroke.
+    const registrations = [];
     await withChat('', async (harness) => {
         const context = {
             ...harness,
@@ -113,14 +158,14 @@ test('the command registers itself once, with the three scopes named', async () 
             SlashCommand: { fromProps: (props) => ({ ...props }) },
             SlashCommandArgument: { fromProps: (props) => ({ ...props }) },
             SlashCommandNamedArgument: { fromProps: (props) => ({ ...props }) },
-            SlashCommandParser: { addCommandObject: (command) => { registered = command; } },
+            SlashCommandParser: { addCommandObject: (command) => registrations.push(command) },
         };
         assert.equal(installCommands(context), true);
-        // A second call must not subscribe the client twice, which would run
-        // every action twice for one keystroke.
         assert.equal(installCommands(context), true);
     });
 
+    assert.equal(registrations.length, 1, 'the command was registered more than once');
+    const [registered] = registrations;
     assert.equal(registered.name, 'st-emote');
     assert.equal(typeof registered.callback, 'function');
     assert.deepEqual(
@@ -140,6 +185,21 @@ test('the command registers itself once, with the three scopes named', async () 
             scopeArgument.description.includes(scope),
             `the scope argument does not name ${scope}`,
         );
+    }
+});
+
+test('the sentence that lists the actions names every action the command takes', () => {
+    // The action list lives in the module *and* in a catalog sentence, and the
+    // two drift apart silently otherwise — the sentence is what a user reads when
+    // they mistyped one. This is the check that keeps them the same list.
+    const sentence = t('command.needAction', 'en');
+    for (const action of ACTIONS) {
+        assert.ok(sentence.includes(action), `the sentence does not name "${action}"`);
+    }
+    // And in the other language, where the same list is spelled differently.
+    const chinese = t('command.needAction', 'zh-cn');
+    for (const action of ACTIONS) {
+        assert.ok(chinese.includes(action), `the Chinese sentence does not name "${action}"`);
     }
 });
 
@@ -231,8 +291,26 @@ test('查冲突 says so when nothing collides, rather than printing an empty lis
 });
 
 test('a 冲突 is only a 冲突 while both packs are enabled', async () => {
-    const { result } = await run({ action: 'conflicts', namedArgs: { scope: 'chat' } });
-    assert.equal(result, 'No label is defined by more than one enabled pack.');
+    // The command reads the *current chat's* effective set, and `scope` is not one
+    // of its arguments — so the way to see a 冲突 appear and vanish is to change
+    // what is enabled, not to pass a scope the command ignores.
+    const clean = await run({ action: 'conflicts' });
+    assert.match(clean.result, /No label is defined/);
+
+    const colliding = await run({
+        settings: { enabledPackNames: ['daily', 'roleplay'] },
+        action: 'conflicts',
+    });
+    assert.match(colliding.result, /Conflicts: 1/);
+
+    // And back again once one of them is off — the definition is about *enabled*
+    // packs, so a pack the user switched off must stop being reported.
+    const enabled = await run({
+        action: 'enable',
+        namedArgs: { pack: 'roleplay' },
+    });
+    assert.deepEqual(enabled.context.extensionSettings[STORAGE_KEY].enabledPackNames,
+        ['daily', 'roleplay']);
 });
 
 test('the whole command answers in the client\'s language', async () => {
@@ -241,12 +319,24 @@ test('the whole command answers in the client\'s language', async () => {
     assert.doesNotMatch(result, /conflict/i);
 });
 
-test('reload re-reads the settings, repaints, and says so', async () => {
-    const { result, context } = await run({ action: 'reload' });
-    assert.match(result, /Reloaded st-emote/);
-    // A hand-edited settings file survives the next load because the reload
-    // saves what it just normalized.
-    assert.equal(typeof context.saveSettingsDebounced, 'function');
+test('reload repaints the chat, and claims nothing else', async () => {
+    // What it does: hand every message back to the client to be re-rendered from
+    // its source text. What it used to claim: that it re-read the settings and
+    // saved them — which was never true, and the save would have overwritten a
+    // hand-edited settings file with whatever was in memory.
+    const source = '<p>a [[sticker:daily:happy]] b</p>';
+    const { result, logs, saves, restitched } = await run({ action: 'reload', chatHtml: source });
+
+    // The repaint happened, because the client's re-render was reached for every
+    // message on screen — the DOM path is not installed in this process, so this
+    // is entirely the hook path's repaint, and it works anyway.
+    assert.equal(restitched, 1, 'the chat was not re-rendered');
+    assert.match(result, /Repainted the current chat/);
+    assert.doesNotMatch(result, /[Rr]eload/);
+    assert.ok(logs.some((line) => /repainted the current chat/.test(line)), logs.join('\n'));
+
+    // And it saves nothing, which is the half that used to be a lie.
+    assert.equal(saves, 0);
 });
 
 test('every refusal names what to type instead of throwing', async () => {
