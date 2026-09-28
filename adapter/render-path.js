@@ -14,7 +14,12 @@
 
 import { supportsMessageFormatter } from '../core/render.js';
 import { installHookRendering } from './hook.js';
-import { allowStickerTag, installDomRendering, processAllMessages } from './rendering.js';
+import {
+    allowStickerTag,
+    installDomRendering,
+    installStickerImageGuard,
+    processAllMessages,
+} from './rendering.js';
 import { ensureSettings } from './settings.js';
 import { liveContext } from './scope.js';
 
@@ -63,6 +68,10 @@ export function installRendering(context) {
     // while the DOM path would have shown it. Installing it on both is what
     // keeps "out of scope" looking the same on either client.
     allowStickerTag(ensureSettings(context).stickerTag);
+    // Shared by both paths, so a sticker image that cannot be drawn — a file
+    // that never arrived, a 外链 that has gone dead — is taken out of the chat
+    // and logged on either client.
+    installStickerImageGuard();
     if (selectRenderPath(context) === 'hook' && installHookRendering(context)) {
         activePath = 'hook';
         return activePath;

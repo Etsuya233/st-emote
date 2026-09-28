@@ -14,12 +14,16 @@
  * fake has to reproduce it faithfully.
  */
 
+import { readFile } from 'node:fs/promises';
+
 import { JSDOM } from 'jsdom';
 
 import { STORAGE_KEY } from '../../adapter/settings.js';
 
 /** Globals the adapter reads as ambient browser state. */
-const BROWSER_GLOBALS = ['document', 'NodeFilter', 'Node', 'HTMLImageElement', 'Event', 'CustomEvent'];
+const BROWSER_GLOBALS = [
+    'document', 'window', 'NodeFilter', 'Node', 'HTMLImageElement', 'Event', 'CustomEvent', 'FileReader',
+];
 
 /**
  * Build a page with a chat, and install the browser globals for the duration of
@@ -43,6 +47,117 @@ export async function withChat(bodyHtml, body) {
         }
         window.close();
     }
+}
+
+/**
+ * The same page, but with the container the extension settings panel mounts
+ * into. The panel is the one part of the adapter that is pure DOM, so a jsdom
+ * page is the only honest way to drive it — a fake element tree would be a
+ * second implementation of the browser again.
+ *
+ * @param {(harness: object) => void|Promise<void>} body
+ */
+export async function withPanel(body) {
+    return withChat('', async (harness) => {
+        const container = harness.document.createElement('div');
+        container.id = 'extensions_settings';
+        harness.document.body.append(container);
+        await body({ ...harness, panel: container });
+    });
+}
+
+/**
+ * Run `body` with the zip library the client's checkout ships, installed as the
+ * global the adapter's lazy import produces.
+ *
+ * The extension deliberately carries no dependency of its own, so the only
+ * honest way to test the archive code is against the copy the client actually
+ * serves. When no checkout can be found the suite **skips**: a green run against
+ * a substitute would prove nothing about the real library. Point
+ * `SILLYTAVERN_PATH` at a checkout to make sure it runs.
+ *
+ * @param {import('node:test').TestContext} t
+ * @param {(JSZip: any) => void|Promise<void>} body
+ */
+export async function withJsZip(t, body) {
+    const source = await findJsZipSource();
+    if (source === null) {
+        t.skip('no SillyTavern checkout found; set SILLYTAVERN_PATH to run the archive tests');
+        return;
+    }
+    const previous = globalThis.JSZip;
+    // The library file is a plain script that publishes a global, so it is
+    // evaluated rather than imported: that is exactly how the client loads it.
+    new Function('window', 'self', source)(globalThis, globalThis);
+    try {
+        await body(globalThis.JSZip);
+    } finally {
+        globalThis.JSZip = previous;
+    }
+}
+
+let jsZipSource;
+
+/**
+ * @returns {Promise<string|null>}
+ */
+async function findJsZipSource() {
+    if (jsZipSource !== undefined) {
+        return jsZipSource;
+    }
+    const candidates = [
+        process.env.SILLYTAVERN_PATH,
+        new URL('../../SillyTavern/public/lib/jszip.min.js', import.meta.url),
+        new URL('../../../SillyTavern/public/lib/jszip.min.js', import.meta.url),
+    ].filter(Boolean);
+    jsZipSource = null;
+    for (const candidate of candidates) {
+        try {
+            jsZipSource = await readFile(candidate, 'utf8');
+            break;
+        } catch {
+            // Try the next candidate.
+        }
+    }
+    return jsZipSource;
+}
+
+/**
+ * A stand-in for the client's own `fetch`, driven by a routing table. Only the
+ * three image endpoints this extension calls are routed; anything else fails
+ * loudly rather than resolving to nothing, so a new call site cannot pass
+ * unnoticed.
+ *
+ * @param {{upload?: Function, list?: Function, remove?: Function}} routes
+ * @returns {Function} A `fetch` replacement, plus a `calls` array on it.
+ */
+export function fakeFetch(routes = {}) {
+    const calls = [];
+    const fetch = async (url, init = {}) => {
+        const body = init.body ? JSON.parse(init.body) : {};
+        calls.push({ url, body });
+        const route = url.endsWith('/upload')
+            ? routes.upload
+            : url.endsWith('/list')
+                ? routes.list
+                : url.endsWith('/delete')
+                    ? routes.remove
+                    : null;
+        const result = typeof route === 'function' ? await route(body) : route;
+        if (result === undefined) {
+            throw new Error(`fakeFetch has no route for ${url}`);
+        }
+        if (result instanceof Error) {
+            throw result;
+        }
+        return {
+            ok: result.status === undefined || (result.status >= 200 && result.status < 300),
+            status: result.status ?? 200,
+            json: async () => result.body,
+        };
+    };
+    fetch.calls = calls;
+    return fetch;
 }
 
 /**
@@ -105,6 +220,10 @@ function createContext(document) {
         chatMetadata: {},
         eventTypes: EVENT_TYPES,
         eventSource: createEventBus(),
+        getRequestHeaders: () => ({ 'x-csrf-token': 'test' }),
+        saveSettingsDebounced: () => {},
+        updateChatMetadata() {},
+        saveMetadata() {},
         /**
          * The client's own re-render: run the message text through formatting
          * and replace the body with the result, exactly as the real

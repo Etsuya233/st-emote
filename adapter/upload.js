@@ -1,69 +1,209 @@
-import { IMAGE_SUBFOLDER } from './settings.js';
+/**
+ * Talking to SillyTavern's own image endpoints, and nothing else.
+ *
+ * Which files may be uploaded, how large they may be and what a 外链 is are
+ * rules, and they live in `core/image-rules.js`; this module only moves bytes
+ * and reports what the server said. It also owns the one thing the server can
+ * answer that the core cannot: which of our files are actually on this server,
+ * which is how a pack whose images did not travel with the settings is spotted.
+ */
 
-/** Accepted extensions, mapped to the format accepted by the upload endpoint. */
-const ALLOWED_FORMATS = {
-    png: 'png',
-    jpg: 'jpg',
-    jpeg: 'jpg',
-    webp: 'webp',
-    gif: 'gif',
-};
+import {
+    IMAGE_DIR,
+    IMAGE_FILE_PREFIX,
+    IMAGE_SUBFOLDER,
+    MAX_IMAGE_BYTES,
+    acceptImageFile,
+    imageFormatOf,
+    ownImageFileName,
+} from '../core/image-rules.js';
+import { MANIFEST_FILE } from '../core/manifest.js';
 
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export { IMAGE_DIR, IMAGE_FILE_PREFIX, IMAGE_SUBFOLDER, MAX_IMAGE_BYTES, imageFormatOf };
 
 /**
- * @param {File} file
- * @returns {string|null} Format accepted by the upload endpoint, or null.
+ * The reason an upload was refused, in words the panel can show as-is.
+ *
+ * @param {string} reason - An `ImageAcceptance` reason.
+ * @returns {string}
  */
-export function imageFormatOf(file) {
-    const name = String(file?.name ?? '');
-    const dot = name.lastIndexOf('.');
-    if (dot === -1) {
-        return null;
+export function uploadRefusalMessage(reason) {
+    if (reason === 'too-large') {
+        return 'larger than 5MB — pick a smaller file (this extension does not compress images)';
     }
-    const extension = name.slice(dot + 1).toLowerCase();
-    return ALLOWED_FORMATS[extension] ?? null;
+    return 'not a png, jpg, webp or gif';
+}
+
+/**
+ * The reasons an archive could not be read, in the panel's words. They exist
+ * one-for-one with what `core/manifest.js` can reject, so a file from someone
+ * else is refused for a stated reason rather than failing somewhere deep in a
+ * zip reader.
+ *
+ * @param {string} reason
+ * @returns {string}
+ */
+export function importFailureMessage(reason) {
+    switch (reason) {
+        case 'not-a-zip':
+            return 'that file is not a readable zip archive';
+        case 'no-manifest':
+            return `that zip has no ${MANIFEST_FILE} in it, so it is not a st-emote pack`;
+        case 'not-a-pack':
+            return 'that zip was not made by st-emote';
+        case 'unsupported-version':
+            return 'that pack was made by a newer version of st-emote';
+        case 'name-taken':
+            return 'a pack with that name already exists; rename or delete it first';
+        case 'missing-image':
+            return 'that pack is incomplete: one of its image files is missing from the zip';
+        default:
+            return `that pack could not be read (${reason})`;
+    }
 }
 
 /**
  * Upload one image through SillyTavern's own image endpoint and return the
  * stored client-relative path.
  *
+ * The file is refused here for the same reason the panel would have refused it,
+ * rather than being sent and rejected: the acceptance rules are the core's, and
+ * this is the second place they are asked, not a second copy of them.
+ *
  * @param {{getRequestHeaders: () => Record<string, string>}} context
- * @param {File} file
+ * @param {File|{name: string, size: number}} file
  * @param {string} stickerId
  * @returns {Promise<string>}
  */
 export async function uploadStickerImage(context, file, stickerId) {
-    const format = imageFormatOf(file);
-    if (!format) {
-        throw new Error(`unsupported image format: ${file.name}`);
+    const accepted = acceptImageFile(file);
+    if (!accepted.ok) {
+        throw new Error(uploadRefusalMessage(accepted.reason));
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-        throw new Error(`image exceeds 5MB: ${file.name}`);
-    }
+    return uploadImage(context, await readAsBase64(file), accepted.format, stickerId);
+}
 
-    const base64 = await readAsBase64(file);
-    const response = await fetch('/api/images/upload', {
-        method: 'POST',
-        headers: context.getRequestHeaders(),
-        body: JSON.stringify({
-            image: base64,
-            format,
-            ch_name: IMAGE_SUBFOLDER,
-            filename: `st-emote-${stickerId}`,
-        }),
+/**
+ * Store already-encoded image bytes.
+ *
+ * The step an import takes: the bytes come out of a zip rather than off the
+ * user's disk, but the endpoint cannot tell the difference, and the acceptance
+ * rules have already been applied by whoever read the archive. Going through
+ * one function means an imported image is stored under the same name, in the
+ * same folder, as an uploaded one — which is what makes the two origins
+ * indistinguishable to everything downstream, deletion included.
+ *
+ * @param {{getRequestHeaders: () => Record<string, string>}} context
+ * @param {string} base64 - Base64 payload without the data-URL prefix.
+ * @param {string} format - One of png / jpg / webp / gif.
+ * @param {string} stickerId
+ * @returns {Promise<string>}
+ */
+export async function uploadImage(context, base64, format, stickerId) {
+    const data = await postJson(context, '/api/images/upload', {
+        image: base64,
+        format,
+        ch_name: IMAGE_SUBFOLDER,
+        filename: `${IMAGE_FILE_PREFIX}${stickerId}`,
     });
 
-    if (!response.ok) {
-        throw new Error(`upload failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
     if (!data || typeof data.path !== 'string' || data.path === '') {
         throw new Error('upload returned no path');
     }
     return data.path;
+}
+
+/**
+ * Delete one stored image.
+ *
+ * The server refuses anything outside `user/images/`, and answers 404 for a
+ * file that is already gone — which is the normal state on a device where the
+ * image never arrived, so a 404 is reported as "nothing to do" rather than as a
+ * failure. The caller is expected to have filtered the path through
+ * `isOwnImagePath` already; this is the second gate, not the only one.
+ *
+ * @param {{getRequestHeaders: () => Record<string, string>}} context
+ * @param {string} path - Client-relative path of the file to remove.
+ * @returns {Promise<'deleted'|'absent'>}
+ */
+export async function deleteStickerImage(context, path) {
+    const response = await fetch('/api/images/delete', {
+        method: 'POST',
+        headers: context.getRequestHeaders(),
+        body: JSON.stringify({ path }),
+    });
+    if (response.status === 404) {
+        return 'absent';
+    }
+    if (!response.ok) {
+        throw new Error(`delete failed with status ${response.status}`);
+    }
+    return 'deleted';
+}
+
+/**
+ * The names of the image files this extension owns on this server.
+ *
+ * One listing, compared by bare file name: the listing already names the
+ * folder, and a sticker stores a path whose directory is fixed. Comparing whole
+ * paths would break the moment the client spelled the directory differently.
+ *
+ * @param {{getRequestHeaders: () => Record<string, string>}} context
+ * @returns {Promise<Set<string>|null>} The file names, or null when the server
+ *   could not be asked — which reads as "no claim either way" rather than "every
+ *   image is missing". An **empty set** is a real answer and means exactly that:
+ *   the folder holds no files.
+ */
+export async function listOwnImageFiles(context) {
+    try {
+        const names = await postJson(context, '/api/images/list', {
+            folder: IMAGE_SUBFOLDER,
+            sortField: 'name',
+            sortOrder: 'asc',
+        });
+        if (!Array.isArray(names)) {
+            return new Set();
+        }
+        return new Set(names.filter((name) => typeof name === 'string'));
+    } catch (error) {
+        console.warn('[st-emote] could not list stored images; assuming none are missing', error);
+        return null;
+    }
+}
+
+/**
+ * A predicate for `core/library.js`: does this local image exist on the server?
+ *
+ * @param {Set<string>|null} names - From `listOwnImageFiles`, or null when the
+ *   listing was never taken or could not be read.
+ * @returns {(image: string) => boolean}
+ */
+export function imageFileChecker(names) {
+    if (!names) {
+        // No listing means no claim either way. Reporting every pack as greyed
+        // out because the server was unreachable would be worse than not
+        // reporting the problem at all.
+        return () => true;
+    }
+    return (image) => names.has(ownImageFileName(image));
+}
+
+/**
+ * @param {{getRequestHeaders: () => Record<string, string>}} context
+ * @param {string} url
+ * @param {object} body
+ * @returns {Promise<any>}
+ */
+async function postJson(context, url, body) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: context.getRequestHeaders(),
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        throw new Error(`${url} failed with status ${response.status}`);
+    }
+    return response.json();
 }
 
 /**

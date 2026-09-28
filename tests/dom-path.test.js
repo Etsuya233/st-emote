@@ -14,7 +14,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { installDomRendering, processAllMessages, renderMessageElement, rerenderChat } from '../adapter/rendering.js';
+import {
+    installDomRendering,
+    installStickerImageGuard,
+    processAllMessages,
+    renderMessageElement,
+    rerenderChat,
+} from '../adapter/rendering.js';
 import { resumeRendering, restoreMessageText, stopRendering } from '../adapter/restore.js';
 import { STICKER_CLASS } from '../core/render.js';
 import { assertRendersAs, sticker } from './contract/render-contract.js';
@@ -405,6 +411,32 @@ test('a re-render follows the chat the client is showing, not the one captured a
             );
             // And message 1, which neither chat puts a token in, is untouched.
             assert.equal(document.querySelectorAll('.mes')[1].querySelector('.mes_text').innerHTML, '<p>nothing</p>');
+        },
+    );
+});
+
+test('a sticker image that fails to load is taken out of the chat', async () => {
+    // A dead 外链 and a file that never arrived both arrive as an image that
+    // fired `error`. Removing it is what makes a 未命中 actually look like one
+    // instead of a broken-image icon sitting in the reply.
+    await withChat(
+        message({ mesid: 0, html: '<p>[[sticker:daily:happy]] and [[sticker:daily:sad]]</p>' }),
+        ({ document, ...rest }) => {
+            const context = withSettings(rest, defaultPacks());
+            installDomRendering(context);
+            // Normally installed by the path chooser, which both paths go
+            // through; called directly here because that is what this suite does.
+            installStickerImageGuard();
+            renderMessageElement(context, document.querySelector('.mes'));
+            assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 2);
+
+            document.querySelectorAll(`img.${STICKER_CLASS}`)[0].dispatchEvent(
+                new globalThis.Event('error', { bubbles: true }),
+            );
+
+            const images = document.querySelectorAll(`img.${STICKER_CLASS}`);
+            assert.equal(images.length, 1);
+            assert.equal(images[0].getAttribute('alt'), 'sad');
         },
     );
 });

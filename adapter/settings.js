@@ -1,13 +1,18 @@
 import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
 import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
+import { IMAGE_SUBFOLDER } from '../core/image-rules.js';
 import { DEFAULT_PLACEMENT, validatePlacement } from '../core/placement.js';
 import { ensureSizeSets } from '../core/size.js';
 
 /** Key under `extension_settings` that holds this extension's data. */
 export const STORAGE_KEY = 'st-emote';
 
-/** Sub-folder inside `user/images/` where uploaded sticker files are written. */
-export const IMAGE_SUBFOLDER = 'st-emote';
+/**
+ * Sub-folder inside `user/images/` where uploaded sticker files are written.
+ * Re-exported from the pure core, which owns it: where the files go and what
+ * they may be called are one decision, and the delete filter depends on both.
+ */
+export { IMAGE_SUBFOLDER };
 
 const SCHEMA_VERSION = 1;
 

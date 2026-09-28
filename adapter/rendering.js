@@ -12,6 +12,7 @@
  */
 
 import { DEFAULT_STICKER_TAG, validateStickerTag } from '../core/constraints.js';
+import { isOwnImagePath } from '../core/image-rules.js';
 import {
     BLOCK_CONTAINER_SELECTOR,
     PLACED_ATTRIBUTE,
@@ -404,8 +405,56 @@ function handleImageError(event) {
     if (!(target instanceof HTMLImageElement) || !target.classList.contains(STICKER_CLASS)) {
         return;
     }
-    console.info(`${LOG_PREFIX} sticker image not found: ${target.getAttribute('src')}`);
+    const src = target.getAttribute('src') ?? '';
+    // The last of the 未命中 sources, and the only one observable only after the
+    // fact: a file that is not on this server and a 外链 whose address has gone
+    // dead both arrive here, long after the token matched. They are told apart
+    // by whether the source is one of our files, because the fix differs — one
+    // needs the picture put back, the other a working address.
+    const reason = isOwnImagePath(src) ? 'image-missing' : 'external-link-failed';
+    const qualified = `${target.getAttribute('data-st-emote-pack') ?? ''}`
+        + `:${target.getAttribute('data-st-emote-label') ?? ''}`;
+    console.info(`${LOG_PREFIX} sticker not rendered (${reason}): ${qualified} (${src})`);
     target.remove();
+}
+
+/**
+ * The element the guard is currently listening on.
+ *
+ * The element rather than a boolean, because `#chat` is a singleton in the
+ * client but not necessarily in a test: a flag would claim to be installed while
+ * pointing at an element that is no longer in the document, and a dead link
+ * would quietly stop being cleaned up. Comparing the element re-installs only
+ * when it genuinely changed.
+ *
+ * @type {Element|null}
+ */
+let stickerImageGuardTarget = null;
+
+/**
+ * Watch for sticker images that fail to load, on **both** render paths.
+ *
+ * A sticker whose file never arrived on this server, and a 外链 whose address has
+ * gone dead, both have to count as a 未命中: the spec says so, and both arrive
+ * here as an image that fired `error`. The two paths differ in how the image got
+ * into the DOM and not at all in what should happen when it cannot be drawn, so
+ * the listener is installed by the path chooser rather than by one path — the
+ * hook path has no DOM pass to hang it off, and a dead link there would
+ * otherwise sit on screen as a broken-image icon for good.
+ *
+ * Idempotent for the same element, because the entry point and the enable hook
+ * can both reach it.
+ */
+export function installStickerImageGuard() {
+    // `document` is read defensively: this is a nicety for the chat view, and
+    // the hook path is installable in a context that has no DOM at all.
+    const chatElement = globalThis.document?.getElementById('chat');
+    if (!chatElement || chatElement === stickerImageGuardTarget) {
+        return;
+    }
+    stickerImageGuardTarget = chatElement;
+    // Capture phase: `error` on an image does not bubble.
+    chatElement.addEventListener('error', handleImageError, true);
 }
 
 /**
@@ -441,9 +490,4 @@ export function installDomRendering(context) {
     eventSource.on(eventTypes.MORE_MESSAGES_LOADED, () => {
         processAllMessages(context);
     });
-
-    const chatElement = document.getElementById('chat');
-    if (chatElement) {
-        chatElement.addEventListener('error', handleImageError, true);
-    }
 }

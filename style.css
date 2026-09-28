@@ -120,6 +120,17 @@
     font-size: 0.85em;
 }
 
+.st-emote-import {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.st-emote-import .text_pole {
+    flex: 1;
+}
+
 .st-emote-pack {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
@@ -127,11 +138,59 @@
     margin-bottom: 8px;
 }
 
+/*
+ * A pack whose image files are not on this server. Greyed, not disabled: the
+ * spec keeps such a pack enableable, because the way out is to put the pictures
+ * back rather than to give up on the pack.
+ */
+.st-emote-pack-missing {
+    opacity: 0.6;
+}
+
+.st-emote-pack-missing .st-emote-pack-name,
+.st-emote-pack-missing .st-emote-enable {
+    opacity: 1;
+}
+
 .st-emote-pack-header {
     display: flex;
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
+}
+
+/*
+ * The pack cover: the first sticker that has a picture. Clickable only in the
+ * "images are missing" state, where it is the way back in.
+ */
+.st-emote-cover {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.2);
+    flex-shrink: 0;
+}
+
+.st-emote-cover-empty {
+    border: 1px dashed var(--SmartThemeBorderColor);
+}
+
+.st-emote-cover-action {
+    cursor: pointer;
+    border: 1px dashed var(--SmartThemeQuoteColor, #c0392b);
+}
+
+.st-emote-selection {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.st-emote-sticker-tick {
+    flex-shrink: 0;
 }
 
 .st-emote-pack-name {
@@ -162,6 +221,11 @@
     display: flex;
     gap: 6px;
     align-items: center;
+    flex-wrap: wrap;
+}
+
+.st-emote-action {
+    flex-shrink: 0;
 }
 
 .st-emote-thumb {
@@ -195,6 +259,19 @@
     font-size: 0.8em;
     opacity: 0.8;
     white-space: nowrap;
+}
+
+/*
+ * 外链 and 空 / 图片未同步 read differently from the ordinary labels: 外链 is a
+ * fact about where the picture lives, the other two are states of the pack.
+ */
+.st-emote-badge-external {
+    border-color: var(--SmartThemeQuoteColor, #c0392b);
+}
+
+.st-emote-badge-images-missing {
+    border-color: var(--SmartThemeQuoteColor, #c0392b);
+    opacity: 1;
 }
 
 .st-emote-empty {

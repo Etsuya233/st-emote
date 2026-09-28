@@ -66,7 +66,7 @@ export const STICKER_BLOCK_SUFFIX = '-block';
 
 /**
  * @typedef {Object} Miss
- * @property {'pack-not-found'|'pack-not-enabled'|'label-not-found'|'ambiguous-bare-label'|'image-missing'} reason
+ * @property {'pack-not-found'|'pack-not-enabled'|'label-not-found'|'ambiguous-bare-label'|'image-missing'|'external-link-failed'} reason
  * @property {string} raw
  * @property {string|null} packName
  * @property {string} label
@@ -121,6 +121,10 @@ function resolveToken(token, effectiveSet, misses) {
         return null;
     }
     if (!result.sticker.image) {
+        // No source at all. A source that is *there* but does not load — a file
+        // that never arrived, or a dead 外链 — cannot be known here; it surfaces
+        // later as an `error` on the image, which is where `external-link-failed`
+        // comes from.
         misses.push({
             reason: 'image-missing',
             raw: token.raw,
