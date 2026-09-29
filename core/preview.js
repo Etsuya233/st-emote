@@ -92,17 +92,16 @@ export function buildPreview(text, effectiveSet, options = {}, toMessageBody = e
  * question is "what is wrong" rather than "how many times".
  *
  * @param {Preview} preview
- * @param {string} [locale]
  * @returns {string}
  */
-export function formatPreview(preview, locale) {
+export function formatPreview(preview) {
     if (!preview || preview.tokenCount === 0) {
-        return t('panel.previewEmpty', locale);
+        return t('panel.previewEmpty');
     }
     if (preview.misses.length === 0) {
         return '';
     }
     const reasons = [...new Set(preview.misses.map((miss) => miss.reason))]
-        .map((reason) => t(`miss.reason.${reason}`, locale));
-    return t('panel.previewMisses', locale, { reasons: reasons.join(', ') });
+        .map((reason) => t(`miss.reason.${reason}`));
+    return t('panel.previewMisses', { reasons: reasons.join(', ') });
 }

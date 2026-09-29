@@ -14,6 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CATALOGS, DEFAULT_LOCALE, resolveLocale, t, tKeys } from '../core/i18n.js';
+import { withLocale } from './contract/locale.js';
 
 test('every locale covers exactly the keys the English source defines', () => {
     const english = tKeys(DEFAULT_LOCALE).sort();
@@ -36,17 +37,32 @@ test('no catalog defines a key the English source does not', () => {
 });
 
 test('a locale with no catalog falls back to the English source', () => {
-    assert.equal(t('panel.createPack', 'fr-fr'), CATALOGS.en['panel.createPack']);
-    assert.equal(t('panel.createPack', undefined), CATALOGS.en['panel.createPack']);
+    withLocale('fr-fr', () => {
+        assert.equal(t('panel.createPack'), CATALOGS.en['panel.createPack']);
+    });
+});
+
+test('the locale the adapter publishes is the one t reads', () => {
+    // `t` has no locale argument: the language is the ambient value the adapter
+    // publishes, and a test that wants the other catalog publishes it the same way.
+    assert.equal(t('panel.createPack'), 'Create pack');
+    withLocale('zh-cn', () => {
+        assert.equal(t('panel.createPack'), '新建表情包');
+    });
+    assert.equal(t('panel.createPack'), 'Create pack');
 });
 
 test('an unknown key comes back as itself rather than as nothing', () => {
-    assert.equal(t('panel.nothingUsesThis', 'zh-cn'), 'panel.nothingUsesThis');
+    withLocale('zh-cn', () => {
+        assert.equal(t('panel.nothingUsesThis'), 'panel.nothingUsesThis');
+    });
 });
 
 test('the shipped locale reads as Chinese and the source as English', () => {
-    assert.equal(t('panel.createPack', 'zh-cn'), '新建表情包');
-    assert.equal(t('panel.createPack', 'en'), 'Create pack');
+    assert.equal(t('panel.createPack'), 'Create pack');
+    withLocale('zh-cn', () => {
+        assert.equal(t('panel.createPack'), '新建表情包');
+    });
 });
 
 test('a Chinese client locale resolves to the Chinese catalog', () => {
@@ -67,29 +83,33 @@ test('a Chinese variant this catalog does not serve reads as English', () => {
 });
 
 test('a value is substituted where the sentence puts it', () => {
-    assert.match(t('panel.noStickerMatches', 'en', { query: 'zzz' }), /zzz/);
-    assert.match(t('panel.noStickerMatches', 'zh-cn', { query: 'zzz' }), /zzz/);
+    withLocale('en', () => assert.match(t('panel.noStickerMatches', { query: 'zzz' }), /zzz/));
+    withLocale('zh-cn', () => assert.match(t('panel.noStickerMatches', { query: 'zzz' }), /zzz/));
 });
 
 test('a value nobody supplied is left as the placeholder, so the gap is visible', () => {
-    assert.match(t('panel.noStickerMatches', 'en', {}), /\{query\}/);
+    assert.match(t('panel.noStickerMatches', {}), /\{query\}/);
 });
 
 test('a count picks the singular wording when there is exactly one', () => {
-    assert.equal(t('pack.stickerCount', 'en', { count: 1 }), '1 sticker');
-    assert.equal(t('pack.stickerCount', 'en', { count: 3 }), '3 stickers');
+    withLocale('en', () => {
+        assert.equal(t('pack.stickerCount', { count: 1 }), '1 sticker');
+        assert.equal(t('pack.stickerCount', { count: 3 }), '3 stickers');
+    });
     // Chinese has no plural, so both spellings are the same sentence.
-    assert.equal(t('pack.stickerCount', 'zh-cn', { count: 1 }), '1 个表情');
-    assert.equal(t('pack.stickerCount', 'zh-cn', { count: 3 }), '3 个表情');
+    withLocale('zh-cn', () => {
+        assert.equal(t('pack.stickerCount', { count: 1 }), '1 个表情');
+        assert.equal(t('pack.stickerCount', { count: 3 }), '3 个表情');
+    });
 });
 
 test('a count with no singular wording keeps its own', () => {
     // The rule is "try `.one` first", not "every counted key must have one" —
     // otherwise a key like the missing-packs header would be forced into a
     // plural it does not have.
-    assert.equal(t('panel.missingPackHeader', 'en', { count: 1 }),
+    assert.equal(t('panel.missingPackHeader', { count: 1 }),
         "Missing packs referenced by this chat's characters (1)");
-    assert.match(t('panel.missingPackHeader', 'en', { count: 2 }), /2/);
+    assert.match(t('panel.missingPackHeader', { count: 2 }), /2/);
     assert.equal(CATALOGS.en['panel.missingPackHeader.one'], undefined);
 });
 
@@ -140,8 +160,8 @@ test('an interpolated value is substituted, and the lookup does not escape it', 
     // escaping step and none is wanted here: escaping at the lookup would make
     // the same sentence read as `&lt;img` in a toast.
     const values = { name: '<img src=x onerror=alert(1)>' };
-    assert.match(t('pack.nameTaken', 'en', values), /<img/);
-    assert.match(t('pack.nameTaken', 'zh-cn', values), /<img/);
+    assert.match(t('pack.nameTaken', values), /<img/);
+    withLocale('zh-cn', () => assert.match(t('pack.nameTaken', values), /<img/));
 });
 
 test('the catalog carries no value nobody can reach', () => {

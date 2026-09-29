@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 
 import { buildEffectiveSet } from '../core/effective-set.js';
 import { findConflicts, formatConflicts } from '../core/conflict.js';
+import { withLocale } from './contract/locale.js';
 
 const packs = [
     {
@@ -155,7 +156,7 @@ test('an unlabeled sticker never counts towards a 冲突', () => {
 
 test('the report names the packs behind each label, in the panel\'s language', () => {
     const set = buildEffectiveSet(packs, ['daily', 'roleplay', 'unused']);
-    const report = formatConflicts(set, 'en');
+    const report = withLocale('en', () => formatConflicts(set));
 
     // A header with the count, so "two of them" is answerable without counting
     // rows, and one row per label naming the packs behind it.
@@ -167,7 +168,7 @@ test('the report names the packs behind each label, in the panel\'s language', (
     // because reporting only `happy` would not tell the user which one to change.
     assert.match(report, /wave — defined by daily, unused/);
 
-    const chinese = formatConflicts(set, 'zh-cn');
+    const chinese = withLocale('zh-cn', () => formatConflicts(set));
     assert.match(chinese, /生效集里的标签冲突（2）/);
     assert.match(chinese, /daily/);
     assert.match(chinese, /roleplay \("Happy"\)/);
@@ -176,11 +177,11 @@ test('the report names the packs behind each label, in the panel\'s language', (
 
 test('a clean 生效集 reports that there is nothing wrong, not an empty list', () => {
     assert.equal(
-        formatConflicts(buildEffectiveSet(packs, ['daily']), 'en'),
+        withLocale('en', () => formatConflicts(buildEffectiveSet(packs, ['daily']))),
         'No label is defined by more than one enabled pack.',
     );
     assert.match(
-        formatConflicts(buildEffectiveSet(packs, ['daily']), 'zh-cn'),
+        withLocale('zh-cn', () => formatConflicts(buildEffectiveSet(packs, ['daily']))),
         /没有哪个标签/,
     );
 });

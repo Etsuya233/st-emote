@@ -1,7 +1,7 @@
 import { buildScopedEffectiveSet } from '../core/effective-set.js';
 import { t } from '../core/i18n.js';
 import { buildListing } from '../core/listing.js';
-import { currentLocale } from './locale.js';
+import { useClientLocale } from './locale.js';
 import { logInfo } from './log.js';
 import { ensureSettings } from './settings.js';
 import { getChatScope, getCurrentCharacterScope } from './scope.js';
@@ -18,13 +18,14 @@ export const MACRO_NAME = 'st-emote';
  * @returns {string}
  */
 export function expandListing(context, mode) {
+    useClientLocale(context);
     const settings = ensureSettings(context);
     const effectiveSet = buildScopedEffectiveSet(settings.packs, {
         global: settings.enabledPackNames,
         character: getCurrentCharacterScope(context),
         chat: getChatScope(context),
     });
-    return buildListing(effectiveSet, { mode, locale: currentLocale(context) });
+    return buildListing(effectiveSet, { mode });
 }
 
 const MACRO_EXAMPLES = ['{{st-emote}}', '{{st-emote::simple}}', '{{st-emote::full}}'];
@@ -43,9 +44,9 @@ const MACRO_EXAMPLES = ['{{st-emote}}', '{{st-emote::simple}}', '{{st-emote::ful
 export function installMacro(context) {
     // The macro's own description is documentation, not interface: the client
     // shows it in its macro help, which the user reads in whatever language the
-    // client is in, so it comes from the same catalog as the panel. Read once —
-    // a locale change reloads the page, so it cannot go stale underneath us.
-    const locale = currentLocale(context);
+    // client is in, so it comes from the same catalog as the panel. Publishing
+    // the locale here also covers the macro handler, which runs later.
+    useClientLocale(context);
 
     if (context.macros?.register) {
         context.macros.register(MACRO_NAME, {
@@ -55,12 +56,12 @@ export function installMacro(context) {
                     name: 'mode',
                     optional: true,
                     defaultValue: 'full',
-                    description: t('macro.modeDescription', locale),
+                    description: t('macro.modeDescription'),
                     sampleValue: 'simple',
                 },
             ],
-            description: t('macro.description', locale),
-            returns: t('macro.returns', locale),
+            description: t('macro.description'),
+            returns: t('macro.returns'),
             exampleUsage: MACRO_EXAMPLES,
             handler: ({ unnamedArgs }) => expandListing(context, unnamedArgs?.[0]),
         });
@@ -73,12 +74,12 @@ export function installMacro(context) {
         // The one console line about the macro is a fact about the user's own
         // setup — their preset writes a macro that is never going to expand — so
         // it is catalogued rather than a second English string living here.
-        logInfo(t('macro.missing', locale));
+        logInfo(t('macro.missing'));
         return;
     }
     context.registerMacro(
         MACRO_NAME,
         () => expandListing(context, 'full'),
-        t('macro.description', locale),
+        t('macro.description'),
     );
 }

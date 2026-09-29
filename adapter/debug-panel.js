@@ -17,9 +17,10 @@
  */
 
 import { escapeText } from '../core/escape.js';
+import { t } from '../core/i18n.js';
 import { buildPreview, formatPreview } from '../core/preview.js';
 import { toast } from './dialogs.js';
-import { currentLocale, tr } from './locale.js';
+import { useClientLocale } from './locale.js';
 import { logInfo } from './log.js';
 import { effectiveSetForMessage, logRenderResult, renderOptions } from './render-common.js';
 import { rerenderChat } from './rendering.js';
@@ -80,6 +81,7 @@ function messageBodyPreparer() {
  * @param {HTMLElement} root - The drawer the panel mounted.
  */
 export function mountDebugSection(context, root) {
+    useClientLocale(context);
     const section = document.createElement('div');
     section.className = 'st-emote-debug';
     section.innerHTML = [
@@ -93,12 +95,12 @@ export function mountDebugSection(context, root) {
         '<div class="st-emote-preview" id="st_emote_preview_out"></div>',
     ].join('');
 
-    section.querySelector('.st-emote-hint').textContent = tr(context, 'panel.debugHint');
+    section.querySelector('.st-emote-hint').textContent = t('panel.debugHint');
     const input = section.querySelector('#st_emote_preview');
-    input.placeholder = tr(context, 'panel.previewPlaceholder');
+    input.placeholder = t('panel.previewPlaceholder');
     const runButton = section.querySelector('#st_emote_preview_run');
-    runButton.textContent = tr(context, 'panel.previewRun');
-    section.querySelector('#st_emote_rerender').textContent = tr(context, 'panel.rerender');
+    runButton.textContent = t('panel.previewRun');
+    section.querySelector('#st_emote_rerender').textContent = t('panel.rerender');
 
     const note = section.querySelector('#st_emote_preview_note');
     const output = section.querySelector('#st_emote_preview_out');
@@ -121,12 +123,12 @@ export function mountDebugSection(context, root) {
         output.innerHTML = preview.html;
         // An untouched box says nothing, rather than complaining that there is
         // nothing in it: the user has not asked a question yet.
-        note.textContent = input.value.trim() === '' ? '' : formatPreview(preview, currentLocale(context));
+        note.textContent = input.value.trim() === '' ? '' : formatPreview(preview);
     });
 
     section.querySelector('#st_emote_rerender').addEventListener('click', () => {
         const repainted = rerenderChat(context);
-        toast('success', tr(context, 'panel.rerendered'));
+        toast('success', t('panel.rerendered'));
         logInfo(`repainted the current chat on request (${repainted} message(s))`);
     });
 

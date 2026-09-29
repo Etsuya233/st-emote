@@ -15,6 +15,7 @@ import {
     planPackExport,
 } from '../core/manifest.js';
 import { MAX_IMAGE_BYTES, MAX_IMAGE_LABEL } from '../core/image-rules.js';
+import { withLocale } from './contract/locale.js';
 
 let counter = 0;
 const newId = (prefix) => `${prefix}_${(counter += 1)}`;
@@ -357,7 +358,7 @@ test('every refusal reason has a sentence the panel can show', () => {
         assert.notEqual(message, reason, `${reason} has no sentence of its own`);
         assert.notEqual(message.includes('{'), true, `${reason} left a placeholder behind`);
         // And the other language has one too.
-        const chinese = importFailureMessage(reason, 'zh-cn');
+        const chinese = withLocale('zh-cn', () => importFailureMessage(reason));
         assert.notEqual(chinese, message, reason);
     }
     assert.match(importFailureMessage('image-too-large'), new RegExp(MAX_IMAGE_LABEL));

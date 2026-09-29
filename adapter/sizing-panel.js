@@ -16,6 +16,7 @@
  * English sentences here to keep in step with a second language.
  */
 
+import { t } from '../core/i18n.js';
 import { PLACEMENTS } from '../core/placement.js';
 import {
     FIT_MODES,
@@ -26,7 +27,6 @@ import {
     validateSizeValue,
 } from '../core/size.js';
 import { logInfo } from './log.js';
-import { tr } from './locale.js';
 import { ensureSettings } from './settings.js';
 
 /**
@@ -64,7 +64,7 @@ export function mountSizingSection(context, root, onChange) {
     const settings = ensureSettings(context);
     const select = root.querySelector('#st_emote_placement');
     for (const placement of PLACEMENTS) {
-        select.append(option(placement, tr(context, PLACEMENT_LABEL_KEYS[placement])));
+        select.append(option(placement, t(PLACEMENT_LABEL_KEYS[placement])));
     }
     select.value = settings.placement;
     select.addEventListener('change', () => {
@@ -90,10 +90,10 @@ export function mountSizingSection(context, root, onChange) {
 export function buildStickerPlacementSelect(context, sticker, onChange) {
     const select = document.createElement('select');
     select.className = 'text_pole st-emote-sticker-placement';
-    select.title = tr(context, 'placement.override');
-    select.append(option('', tr(context, 'placement.follow')));
+    select.title = t('placement.override');
+    select.append(option('', t('placement.follow')));
     for (const placement of PLACEMENTS) {
-        select.append(option(placement, tr(context, PLACEMENT_LABEL_KEYS[placement])));
+        select.append(option(placement, t(PLACEMENT_LABEL_KEYS[placement])));
     }
     select.value = sticker.placement ?? '';
     select.addEventListener('change', () => {
@@ -118,14 +118,14 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
 
     const title = document.createElement('div');
     title.className = 'st-emote-size-set-title';
-    title.textContent = tr(context, SIZE_SET_TITLE_KEYS[sizeSet]);
+    title.textContent = t(SIZE_SET_TITLE_KEYS[sizeSet]);
     group.append(title);
 
     const fields = document.createElement('div');
     fields.className = 'st-emote-size-fields';
     group.append(fields);
 
-    const invalidHint = tr(context, 'size.invalidHint');
+    const invalidHint = t('size.invalidHint');
     for (const field of SIZE_FIELDS) {
         if (field === 'fit') {
             fields.append(buildFitField(context, settings.sizes[sizeSet].fit, (fit) => {
@@ -135,7 +135,7 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
             continue;
         }
         const { wrapper, input, hint } = buildSizeInput(
-            tr(context, SIZE_FIELD_LABEL_KEYS[field]),
+            t(SIZE_FIELD_LABEL_KEYS[field]),
             defaultSizeValue(sizeSet, field) || '—',
         );
         input.value = settings.sizes[sizeSet][field];
@@ -177,11 +177,11 @@ function buildFitField(context, stored, onChange) {
     wrapper.className = 'st-emote-field';
 
     const caption = document.createElement('span');
-    caption.textContent = tr(context, SIZE_FIELD_LABEL_KEYS.fit);
+    caption.textContent = t(SIZE_FIELD_LABEL_KEYS.fit);
 
     const select = document.createElement('select');
     select.className = 'text_pole';
-    select.append(option('', tr(context, 'size.fitDefault')));
+    select.append(option('', t('size.fitDefault')));
     for (const mode of FIT_MODES) {
         select.append(option(mode, mode));
     }

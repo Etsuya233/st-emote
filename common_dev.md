@@ -55,7 +55,7 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 ### 代码布局
 
 - `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）；票 07 起还有界面文案（`i18n-catalogs.js` 是纯数据、`i18n.js` 是查找与 BCP-47 解析）、冲突检测（`conflict.js`）与「试渲染」（`preview.js`）。
-- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层（含两条路径都有效的 `restitchChat`），`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。票 07 起：`locale.js` 是「客户端是哪种语言」这**一个**事实（其余全交给 `core/i18n.js`）；`log.js` 是唯一的控制台出口（`logInfo` / `logError`）；`commands.js` 注册 `/st-emote`；`debug-panel.js` 是调试区（试渲染 + 重新渲染）。`ui.js` 只剩表情包的列表与行。
+- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层（含两条路径都有效的 `restitchChat`），`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。票 07 起：`locale.js` 是「客户端是哪种语言」这**一个**事实，并把它发布给 `core/i18n.js`（其余全交给核心）；`log.js` 是唯一的控制台出口（`logInfo` / `logError`）；`commands.js` 注册 `/st-emote`；`debug-panel.js` 是调试区（试渲染 + 重新渲染）。`ui.js` 只剩表情包的列表与行。
 - `tests/`：纯核心测试 + 共享契约 + 两条适配层的对照与生命周期测试 + 面板与压缩包的集成测试。
 
 ### 图片的存储与生命周期（票 06）
@@ -93,12 +93,12 @@ npm test         # node --test，发现并运行 tests/*.test.js
 
 ### 界面文案与日志（票 07）
 
-- **界面文案只有一处**：用户**在界面上看到**的每一句都来自 `core/i18n-catalogs.js` 的两份目录 + `core/i18n.js` 的纯函数 `t(key, locale, values)`。适配层只提供 locale 字符串（`adapter/locale.js`），连宏的说明文字也走同一份目录。新增文案**必须**两边同时加：`tests/i18n.test.js` 的键集对齐会挂，同一个测试还会检查「目录里没有谁读不到的键」。
+- **界面文案只有一处**：用户**在界面上看到**的每一句都来自 `core/i18n-catalogs.js` 的两份目录 + `core/i18n.js` 的查找 `t(key, values)`。语言是**环境量而不是参数**：适配层在每个入口用 `adapter/locale.js` 的 `useClientLocale(context)` 把「客户端是哪种语言」发布给核心（`core/i18n.js` 的 `setLocale`），此后 `t(key, values)` 直接读它。**任何函数签名里都没有 `locale`**——`locale` 只出现在 i18n 模块自己的 `setLocale` / `resolveLocale` / `tKeys` 上；测试要另一种语言就用 `setLocale`（共享助手 `tests/contract/locale.js` 的 `withLocale` 会在用完后复位）。适配层没有 `tr` 这个转发层，直接调 `t`。连宏的说明文字也走同一份目录。新增文案**必须**两边同时加：`tests/i18n.test.js` 的键集对齐会挂，同一个测试还会检查「目录里没有谁读不到的键」。
 - **控制台另有一条例外，且是有意的**：控制台的**机械性诊断行**（哪个字段、哪个文件、哪个 HTTP 状态）留在英文，因为它们要和 `reason` 枚举并排着读、还要能 grep；翻译它们只会让一次日志搜索依赖语言，而不增加任何信息。**讲用户自己数据的那几行走目录**：冲突（连同各包自己的拼法）、调试区显示的未命中理由、宏不展开的提示。这条线的位置写在 `adapter/log.js` 的模块注释里。
 - 目录值**不带标记**（有测试守着），所以面板的固定骨架用 `innerHTML`、其余一律 `textContent`。用户输入（包名、搜索词、文件名）只进 `textContent`，也就**不需要任何转义查找**——`tHtml` 因此被删掉了，而不是留着备用。
 - `zh-cn` 之外的 `zh-*` 变体（`zh-tw` / `zh-hant` / `zh-hk`）**故意回落英文**——给繁体用户简体不如给他能读的英文。
 - **控制台只有一个出口**：`adapter/log.js` 的 `logInfo` / `logError`（前缀 `[st-emote]`）。`LOG_PREFIX` **不导出给任何别的模块**，也不用 `console.*`——`grep -rn "console\." adapter/` 只应命中 `adapter/log.js` 自己。
-- `importFailureMessage(reason, locale)` 现在是目录查询而不是 switch：每种拒绝理由都要有一句 `import.reason.<reason>`，`tests/manifest.test.js` 会把 `parseManifest` / `planImport` 的全部理由跑一遍。
+- `importFailureMessage(reason)` 现在是目录查询而不是 switch：每种拒绝理由都要有一句 `import.reason.<reason>`，`tests/manifest.test.js` 会把 `parseManifest` / `planImport` 的全部理由跑一遍。
 
 ### 「重新渲染」只有一条路径（票 07 返工）
 

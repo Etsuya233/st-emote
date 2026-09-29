@@ -283,11 +283,10 @@ export function isSafeArchivePath(file) {
  * that explains it are one fact.
  *
  * @param {string} reason
- * @param {string} [locale] - SillyTavern's UI locale.
  * @returns {string}
  */
-export function importFailureMessage(reason, locale) {
-    return t(`import.reason.${reason}`, locale, {
+export function importFailureMessage(reason) {
+    return t(`import.reason.${reason}`, {
         file: MANIFEST_FILE,
         limit: MAX_IMAGE_LABEL,
         reason,

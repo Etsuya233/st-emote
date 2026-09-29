@@ -47,16 +47,15 @@ export async function loadJsZip() {
  * core's export plan, so the two can never fall out of step here.
  *
  * @param {{name: string, stickers: object[]}} pack
- * @param {string} [locale] - Only used to word a failure the panel will show.
  * @returns {Promise<{blob: Blob, fileName: string, count: number}>}
  */
-export async function buildPackArchive(pack, locale) {
+export async function buildPackArchive(pack) {
     const JSZip = await loadJsZip();
     const zip = new JSZip();
     const { manifest, images } = planPackExport(pack);
 
     for (const { path, image } of images) {
-        zip.file(path, await fetchImageBytes(image, locale));
+        zip.file(path, await fetchImageBytes(image));
     }
 
     // Written last so the 包清单 is the last thing to land in the archive, and
@@ -150,13 +149,12 @@ export function downloadBlob(blob, fileName) {
  * bare stack message, which is the one case a user can actually fix themselves.
  *
  * @param {string} path
- * @param {string} [locale]
  * @returns {Promise<Uint8Array>}
  */
-async function fetchImageBytes(path, locale) {
+async function fetchImageBytes(path) {
     const response = await fetch(path);
     if (!response.ok) {
-        throw new Error(t('export.imageMissing', locale, { path }));
+        throw new Error(t('export.imageMissing', { path }));
     }
     return new Uint8Array(await response.arrayBuffer());
 }

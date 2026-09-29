@@ -47,12 +47,13 @@ import {
     isExternalImageUrl,
     validateExternalImageUrl,
 } from '../core/image-rules.js';
+import { t } from '../core/i18n.js';
 import { normalizeLabel } from '../core/normalize.js';
 import { importFailureMessage, planImport } from '../core/manifest.js';
 import { buildPackArchive, downloadBlob, readPackArchive } from './archive.js';
 import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
-import { currentLocale, tr } from './locale.js';
+import { useClientLocale } from './locale.js';
 import { logError } from './log.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
 import { clearContextRegexJson } from './regex.js';
@@ -117,7 +118,7 @@ const selectedStickerIds = new Set();
  * @returns {string}
  */
 function constraintMessage(context, field, reason) {
-    return `${tr(context, `constraint.${field}`)} ${tr(context, `constraint.reason.${reason}`)}.`;
+    return `${t(`constraint.${field}`)} ${t(`constraint.reason.${reason}`)}.`;
 }
 
 /**
@@ -135,7 +136,7 @@ function checkPackName(context, settings, value, except) {
         return { ok: false, message: constraintMessage(context, 'packName', result.reason) };
     }
     if (findPackByName(settings.packs, result.value, { except })) {
-        return { ok: false, message: tr(context, 'pack.nameTaken', { name: result.value }) };
+        return { ok: false, message: t('pack.nameTaken', { name: result.value }) };
     }
     return { ok: true, value: result.value };
 }
@@ -155,7 +156,7 @@ function checkLabel(context, pack, value, except) {
         return { ok: false, message: constraintMessage(context, 'label', result.reason) };
     }
     if (findStickerByLabel(pack.stickers, result.value, { except })) {
-        return { ok: false, message: tr(context, 'sticker.labelTaken', { name: result.value }) };
+        return { ok: false, message: t('sticker.labelTaken', { name: result.value }) };
     }
     return { ok: true, value: result.value };
 }
@@ -251,11 +252,11 @@ function panelSkeleton() {
  * @param {HTMLElement} target
  */
 function fillIntro(context, target) {
-    target.textContent = tr(context, 'panel.intro');
+    target.textContent = t('panel.intro');
     const caption = document.createElement('div');
-    caption.textContent = `${tr(context, 'panel.introTokenCaption')} `;
+    caption.textContent = `${t('panel.introTokenCaption')} `;
     const example = document.createElement('code');
-    example.textContent = tr(context, 'panel.tokenExample');
+    example.textContent = t('panel.tokenExample');
     target.append(caption, example);
 }
 
@@ -265,6 +266,7 @@ function fillIntro(context, target) {
  * @param {any} context
  */
 export function mountSettingsPanel(context) {
+    useClientLocale(context);
     const container = document.getElementById('extensions_settings');
     if (!container || document.getElementById('st_emote_drawer')) {
         return;
@@ -284,19 +286,19 @@ export function mountSettingsPanel(context) {
     const refresh = () => renderPackList(context, packContainer, missingContainer, refresh);
 
     fillIntro(context, root.querySelector('#st_emote_intro'));
-    root.querySelector('#st_emote_size_hint').textContent = tr(context, 'panel.sizeHint');
-    root.querySelector('#st_emote_placement_label').textContent = tr(context, 'placement.label');
-    root.querySelector('#st_emote_render_user_label').textContent = tr(context, 'panel.renderUser');
-    root.querySelector('#st_emote_tag_name_label').textContent = `${tr(context, 'panel.tagName')}:`;
-    root.querySelector('#st_emote_new_pack').placeholder = tr(context, 'panel.newPackName');
-    root.querySelector('#st_emote_create_pack').textContent = tr(context, 'panel.createPack');
-    root.querySelector('#st_emote_macro_hint').textContent = tr(context, 'panel.macroHint');
-    root.querySelector('#st_emote_macro_example').textContent = tr(context, 'panel.macroExample');
-    root.querySelector('#st_emote_regex_hint').textContent = tr(context, 'panel.regexHint');
-    root.querySelector('#st_emote_copy_regex').textContent = tr(context, 'panel.copyRegex');
-    root.querySelector('#st_emote_transfer_hint').textContent = tr(context, 'panel.transferHint');
-    searchInput.placeholder = tr(context, 'panel.searchPlaceholder');
-    root.querySelector('#st_emote_import_pack').textContent = tr(context, 'panel.importPack');
+    root.querySelector('#st_emote_size_hint').textContent = t('panel.sizeHint');
+    root.querySelector('#st_emote_placement_label').textContent = t('placement.label');
+    root.querySelector('#st_emote_render_user_label').textContent = t('panel.renderUser');
+    root.querySelector('#st_emote_tag_name_label').textContent = `${t('panel.tagName')}:`;
+    root.querySelector('#st_emote_new_pack').placeholder = t('panel.newPackName');
+    root.querySelector('#st_emote_create_pack').textContent = t('panel.createPack');
+    root.querySelector('#st_emote_macro_hint').textContent = t('panel.macroHint');
+    root.querySelector('#st_emote_macro_example').textContent = t('panel.macroExample');
+    root.querySelector('#st_emote_regex_hint').textContent = t('panel.regexHint');
+    root.querySelector('#st_emote_copy_regex').textContent = t('panel.copyRegex');
+    root.querySelector('#st_emote_transfer_hint').textContent = t('panel.transferHint');
+    searchInput.placeholder = t('panel.searchPlaceholder');
+    root.querySelector('#st_emote_import_pack').textContent = t('panel.importPack');
     // The debug area sits above the library: it is a tool for tuning the settings
     // further up, and the pack list below it is the longest thing on the page.
     root.querySelector('#st_emote_packs').before(mountDebugSection(context, root));
@@ -322,10 +324,10 @@ export function mountSettingsPanel(context) {
     copyButton.addEventListener('click', async () => {
         try {
             await copyText(regexBlock.textContent);
-            toast('success', tr(context, 'panel.regexCopied'));
+            toast('success', t('panel.regexCopied'));
         } catch (error) {
             logError('failed to copy regex JSON', error);
-            toast('error', tr(context, 'panel.regexCopyFailed'));
+            toast('error', t('panel.regexCopyFailed'));
         }
     });
 
@@ -466,8 +468,8 @@ function renderPackList(context, packContainer, missingContainer, refresh) {
         const empty = document.createElement('div');
         empty.className = 'st-emote-empty';
         empty.textContent = settings.packs.length === 0
-            ? tr(context, 'panel.noPacks')
-            : tr(context, 'panel.noStickerMatches', { query });
+            ? t('panel.noPacks')
+            : t('panel.noStickerMatches', { query });
         packContainer.append(empty);
         return;
     }
@@ -495,7 +497,7 @@ function renderMissingPacks(context, settings, container, refresh) {
 
     const header = document.createElement('div');
     header.className = 'st-emote-missing-header';
-    header.textContent = tr(context, 'panel.missingPackHeader', { count: missing.length });
+    header.textContent = t('panel.missingPackHeader', { count: missing.length });
     container.append(header);
 
     const list = document.createElement('div');
@@ -503,7 +505,7 @@ function renderMissingPacks(context, settings, container, refresh) {
     list.textContent = missing.join(', ');
     container.append(list);
 
-    const button = actionButton(tr(context, 'panel.createMissingPacks'));
+    const button = actionButton(t('panel.createMissingPacks'));
     button.addEventListener('click', () => {
         const current = ensureSettings(context);
         for (const name of missing) {
@@ -513,7 +515,7 @@ function renderMissingPacks(context, settings, container, refresh) {
         }
         context.saveSettingsDebounced();
         rerenderChat(context);
-        toast('success', tr(context, 'panel.missingPacksCreated', { count: missing.length }));
+        toast('success', t('panel.missingPacksCreated', { count: missing.length }));
         refresh();
     });
     container.append(button);
@@ -551,7 +553,7 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
 
     const count = document.createElement('span');
     count.className = 'st-emote-pack-count';
-    count.textContent = tr(context, 'pack.stickerCount', { count: pack.stickers.length });
+    count.textContent = t('pack.stickerCount', { count: pack.stickers.length });
     header.append(count);
 
     const stateKey = PACK_STATE_LABEL_KEYS[state];
@@ -559,30 +561,30 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
         // The class stays `st-emote-badge-<state>`: the stylesheet reads it to
         // colour the two states differently, so it is a hook rather than a label.
         header.append(badge(
-            tr(context, stateKey),
+            t(stateKey),
             `st-emote-badge-${state}`,
-            tr(context, `${stateKey}Title`),
+            t(`${stateKey}Title`),
         ));
     }
 
     header.append(filePickerButton(
-        tr(context, 'pack.uploadImages'),
+        t('pack.uploadImages'),
         { accept: ACCEPTED_MIME, multiple: true, className: 'st-emote-upload' },
         (files) => handleUploads(context, pack, files, refresh),
     ));
-    const addUrl = actionButton(tr(context, 'pack.addImageUrl'), 'st-emote-add-url');
+    const addUrl = actionButton(t('pack.addImageUrl'), 'st-emote-add-url');
     header.append(addUrl);
     addUrl.addEventListener('click', async () => {
         await handleExternalUrl(context, pack, refresh);
     });
 
     if (!searching) {
-        const exportButton = actionButton(tr(context, 'pack.exportZip'), 'st-emote-export');
+        const exportButton = actionButton(t('pack.exportZip'), 'st-emote-export');
         header.append(exportButton);
         exportButton.addEventListener('click', async () => {
             await handleExport(context, pack);
         });
-        const deleteButton = actionButton(tr(context, 'pack.deletePack'), 'st-emote-delete-pack');
+        const deleteButton = actionButton(t('pack.deletePack'), 'st-emote-delete-pack');
         header.append(deleteButton);
         deleteButton.addEventListener('click', async () => {
             await handleDeletePack(context, pack, refresh);
@@ -630,7 +632,7 @@ function buildPackCover(context, pack, state, refresh) {
         // hint because a greyed-out pack with no way back in is the one state
         // this whole feature exists to recover from.
         cover.classList.add('st-emote-cover-action');
-        cover.title = tr(context, 'pack.coverRepoint');
+        cover.title = t('pack.coverRepoint');
         cover.addEventListener('click', async () => {
             const target = pack.stickers.find((sticker) => stickerImageMissing(sticker));
             if (!target) {
@@ -672,7 +674,7 @@ function buildPackNameInput(context, pack, refresh) {
         const nextChatScope = renamePackInScope(getChatScope(context), previousName, check.value);
         setChatScope(context, nextChatScope);
         saveAndRefresh(context);
-        toast('warning', tr(context, 'pack.renamed', { name: check.value }));
+        toast('warning', t('pack.renamed', { name: check.value }));
         refresh();
     });
     return name;
@@ -698,7 +700,7 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
 
     const all = document.createElement('input');
     all.type = 'checkbox';
-    all.title = tr(context, 'pack.selectAllTitle');
+    all.title = t('pack.selectAllTitle');
     all.checked = visible.length > 0 && visible.every((sticker) => selectedStickerIds.has(sticker.id));
     all.addEventListener('change', () => {
         for (const sticker of visible) {
@@ -712,7 +714,7 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
     });
 
     const label = document.createElement('span');
-    label.textContent = searching ? tr(context, 'pack.selectMatches') : tr(context, 'pack.selectAll');
+    label.textContent = searching ? t('pack.selectMatches') : t('pack.selectAll');
     const wrapper = document.createElement('label');
     wrapper.className = 'st-emote-enable';
     wrapper.append(all, label);
@@ -723,12 +725,12 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
     count.className = 'st-emote-pack-count';
     count.textContent = chosen === 0
         ? ''
-        : tr(context, 'pack.selectedCount', { count: chosen });
+        : t('pack.selectedCount', { count: chosen });
     bar.append(count);
 
     if (chosen > 0) {
         const remove = actionButton(
-            tr(context, 'pack.deleteSelected', { count: chosen }),
+            t('pack.deleteSelected', { count: chosen }),
             'st-emote-delete-selected',
         );
         remove.addEventListener('click', async () => {
@@ -741,7 +743,7 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
         // here would delete stickers the user cannot see.
         bar.append(Object.assign(document.createElement('span'), {
             className: 'st-emote-hint',
-            textContent: tr(context, 'pack.searchDeleteHint'),
+            textContent: t('pack.searchDeleteHint'),
         }));
     }
 
@@ -773,7 +775,7 @@ function buildScopeToggles(context, pack) {
     group.className = 'st-emote-scopes';
 
     group.append(buildScopeToggle(
-        tr(context, 'scope.global'),
+        t('scope.global'),
         isPackEnabled(ensureSettings(context), pack.name),
         (checked) => {
             setPackEnabled(ensureSettings(context), pack.name, checked);
@@ -784,7 +786,7 @@ function buildScopeToggles(context, pack) {
     const currentCharacter = getCurrentCharacter(context);
     const hasCharacter = Boolean(currentCharacter);
     group.append(buildScopeToggle(
-        tr(context, 'scope.character'),
+        t('scope.character'),
         hasCharacter && scopeHasPack(getCurrentCharacterScope(context), pack.name),
         (checked) => {
             const next = setPackInScope(getCurrentCharacterScope(context), pack.name, checked);
@@ -794,7 +796,7 @@ function buildScopeToggles(context, pack) {
     ));
 
     group.append(buildScopeToggle(
-        tr(context, 'scope.chat'),
+        t('scope.chat'),
         scopeHasPack(getChatScope(context), pack.name),
         (checked) => {
             const next = setPackInScope(getChatScope(context), pack.name, checked);
@@ -840,7 +842,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     const tick = document.createElement('input');
     tick.type = 'checkbox';
     tick.className = 'st-emote-sticker-tick';
-    tick.title = tr(context, 'sticker.selectForDelete');
+    tick.title = t('sticker.selectForDelete');
     tick.checked = selectedStickerIds.has(sticker.id);
     tick.addEventListener('change', () => {
         if (tick.checked) {
@@ -857,7 +859,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     const labelInput = document.createElement('input');
     labelInput.type = 'text';
     labelInput.className = 'text_pole st-emote-label';
-    labelInput.placeholder = tr(context, 'sticker.labelPlaceholder');
+    labelInput.placeholder = t('sticker.labelPlaceholder');
     labelInput.value = sticker.label;
     labelInput.addEventListener('change', () => {
         const previousLabel = sticker.label;
@@ -873,20 +875,20 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         // a change that normalises away costs no tokens, a real one invalidates
         // every token already written in a chat.
         if (renameBreaksTokens(previousLabel, check.value)) {
-            toast('warning', tr(context, 'sticker.renamed', { name: check.value }));
+            toast('warning', t('sticker.renamed', { name: check.value }));
         }
         refresh();
     });
     row.append(labelInput);
 
     if (!normalizeLabel(sticker.label)) {
-        row.append(badge(tr(context, 'sticker.unlabeled')));
+        row.append(badge(t('sticker.unlabeled')));
     }
     if (isExternalImageUrl(sticker.image)) {
         row.append(badge(
-            tr(context, 'sticker.external'),
+            t('sticker.external'),
             'st-emote-badge-external',
-            tr(context, 'sticker.externalTitle'),
+            t('sticker.externalTitle'),
         ));
     }
 
@@ -911,7 +913,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     row.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
 
     const replace = filePickerButton(
-        tr(context, 'sticker.replace'),
+        t('sticker.replace'),
         { accept: ACCEPTED_MIME, className: 'st-emote-replace' },
         async (files) => {
             await replaceStickerImageWithFile(context, pack, sticker, refresh, files[0]);
@@ -920,7 +922,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     row.append(replace);
 
     if (!searching) {
-        const remove = actionButton(tr(context, 'sticker.delete'), 'st-emote-sticker-delete');
+        const remove = actionButton(t('sticker.delete'), 'st-emote-sticker-delete');
         remove.addEventListener('click', async () => {
             await handleStickerDelete(context, pack, sticker, refresh);
         });
@@ -991,10 +993,10 @@ async function handleUploads(context, pack, files, refresh) {
     for (const file of files) {
         const sticker = createSticker();
         try {
-            sticker.image = await uploadStickerImage(context, file, sticker.id, currentLocale(context));
+            sticker.image = await uploadStickerImage(context, file, sticker.id);
         } catch (error) {
             logError(`upload failed for ${file.name}`, error);
-            toast('error', tr(context, 'upload.failed', { name: file.name, reason: error.message }));
+            toast('error', t('upload.failed', { name: file.name, reason: error.message }));
             continue;
         }
         pack.stickers.push(sticker);
@@ -1007,10 +1009,10 @@ async function handleUploads(context, pack, files, refresh) {
 
     if (uploaded > 0) {
         context.saveSettingsDebounced();
-        toast('success', tr(context, 'upload.done', { count: uploaded, name: pack.name }));
+        toast('success', t('upload.done', { count: uploaded, name: pack.name }));
     }
     if (tooTall.length > 0) {
-        toast('warning', tr(context, 'upload.tooTall', {
+        toast('warning', t('upload.tooTall', {
             limit: SUGGESTED_MAX_HEIGHT_PX,
             names: tooTall.join(', '),
         }));
@@ -1028,20 +1030,20 @@ async function handleUploads(context, pack, files, refresh) {
  * @param {() => void} refresh
  */
 async function handleExternalUrl(context, pack, refresh) {
-    const answer = await askForText(context, tr(context, 'url.prompt'));
+    const answer = await askForText(context, t('url.prompt'));
     if (answer === null) {
         return;
     }
     const check = validateExternalImageUrl(answer);
     if (!check.ok) {
-        toast('warning', tr(context, check.reason === 'empty' ? 'url.empty' : 'url.malformed'));
+        toast('warning', t(check.reason === 'empty' ? 'url.empty' : 'url.malformed'));
         return;
     }
     const sticker = createSticker();
     sticker.image = check.value;
     pack.stickers.push(sticker);
     context.saveSettingsDebounced();
-    toast('success', tr(context, 'url.added', { name: pack.name }));
+    toast('success', t('url.added', { name: pack.name }));
     rerenderChat(context);
     refresh();
 }
@@ -1068,10 +1070,10 @@ async function replaceStickerImageWithFile(context, pack, sticker, refresh, file
 
     let stored;
     try {
-        stored = await uploadStickerImage(context, chosen, sticker.id, currentLocale(context));
+        stored = await uploadStickerImage(context, chosen, sticker.id);
     } catch (error) {
         logError(`could not replace the image of ${sticker.id}`, error);
-        toast('error', tr(context, 'image.replaceFailed', { reason: error.message }));
+        toast('error', t('image.replaceFailed', { reason: error.message }));
         return;
     }
 
@@ -1082,7 +1084,7 @@ async function replaceStickerImageWithFile(context, pack, sticker, refresh, file
         await deleteImageQuietly(context, previous);
     }
     context.saveSettingsDebounced();
-    toast('success', tr(context, previous ? 'image.replaced' : 'image.set'));
+    toast('success', t(previous ? 'image.replaced' : 'image.set'));
     await refreshStoredImages(context);
     rerenderChat(context);
     refresh();
@@ -1118,8 +1120,8 @@ async function handleStickerDelete(context, pack, sticker, refresh) {
     // An unlabeled sticker has no name to put in the sentence, so it gets the
     // one that says "this sticker" instead of a confirmation naming nothing.
     const message = normalizeLabel(sticker.label)
-        ? tr(context, 'delete.sticker', { name: `"${sticker.label}"` })
-        : tr(context, 'delete.stickerUnnamed');
+        ? t('delete.sticker', { name: `"${sticker.label}"` })
+        : t('delete.stickerUnnamed');
     const confirmed = await confirmWithUser(context, message);
     if (!confirmed) {
         return;
@@ -1141,7 +1143,7 @@ async function handleBatchDelete(context, pack, refresh) {
     }
     const confirmed = await confirmWithUser(
         context,
-        tr(context, 'delete.selected', { count: chosen.length }),
+        t('delete.selected', { count: chosen.length }),
     );
     if (!confirmed) {
         return;
@@ -1186,7 +1188,7 @@ async function handleDeletePack(context, pack, refresh) {
     const count = pack.stickers.length;
     const confirmed = await confirmWithUser(
         context,
-        tr(context, 'delete.pack', { name: pack.name, count }),
+        t('delete.pack', { name: pack.name, count }),
     );
     if (!confirmed) {
         return;
@@ -1205,7 +1207,7 @@ async function handleDeletePack(context, pack, refresh) {
         await deleteImageQuietly(context, file);
     }
     await refreshStoredImages(context);
-    toast('success', tr(context, 'delete.packDone', { name: pack.name }));
+    toast('success', t('delete.packDone', { name: pack.name }));
     rerenderChat(context);
     refresh();
 }
@@ -1218,12 +1220,12 @@ async function handleDeletePack(context, pack, refresh) {
  */
 async function handleExport(context, pack) {
     try {
-        const { blob, fileName, count } = await buildPackArchive(pack, currentLocale(context));
+        const { blob, fileName, count } = await buildPackArchive(pack);
         downloadBlob(blob, fileName);
-        toast('success', tr(context, 'export.done', { name: pack.name, count }));
+        toast('success', t('export.done', { name: pack.name, count }));
     } catch (error) {
         logError(`could not export "${pack.name}"`, error);
-        toast('error', tr(context, 'export.failed', { name: pack.name, reason: error.message }));
+        toast('error', t('export.failed', { name: pack.name, reason: error.message }));
     }
 }
 
@@ -1244,11 +1246,11 @@ async function handleImport(context, file, refresh) {
         archive = await readPackArchive(file);
     } catch (error) {
         logError(`could not read ${file.name}`, error);
-        toast('error', tr(context, 'import.readFailed', { name: file.name, reason: error.message }));
+        toast('error', t('import.readFailed', { name: file.name, reason: error.message }));
         return;
     }
     if (!archive.ok) {
-        toast('warning', importFailureMessage(archive.reason, currentLocale(context)));
+        toast('warning', importFailureMessage(archive.reason));
         return;
     }
 
@@ -1261,7 +1263,7 @@ async function handleImport(context, file, refresh) {
     );
     const plan = planImport(archive.manifest, current.packs, newId, imageSizes);
     if (!plan.ok) {
-        toast('warning', importFailureMessage(plan.reason, currentLocale(context)));
+        toast('warning', importFailureMessage(plan.reason));
         return;
     }
 
@@ -1281,7 +1283,7 @@ async function handleImport(context, file, refresh) {
             stored += 1;
         } catch (error) {
             logError(`could not store ${upload.path} from ${file.name}`, error);
-            toast('warning', tr(context, 'upload.failed', { name: upload.path, reason: error.message }));
+            toast('warning', t('upload.failed', { name: upload.path, reason: error.message }));
         }
     }
 
@@ -1290,7 +1292,7 @@ async function handleImport(context, file, refresh) {
     addImportedPack(current, plan.pack);
     context.saveSettingsDebounced();
     await refreshStoredImages(context);
-    toast('success', tr(context, 'import.done', {
+    toast('success', t('import.done', {
         name: plan.pack.name,
         count: plan.pack.stickers.length,
         stored,

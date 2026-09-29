@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { installCommands, runCommand, ACTIONS, SCOPES } from '../adapter/commands.js';
 import { t } from '../core/i18n.js';
 import { STORAGE_KEY } from '../adapter/settings.js';
+import { withLocale } from './contract/locale.js';
 import { message, withChat } from './contract/st-dom.js';
 
 /** Two packs, one of which collides with the other on `happy`. */
@@ -192,12 +193,12 @@ test('the sentence that lists the actions names every action the command takes',
     // The action list lives in the module *and* in a catalog sentence, and the
     // two drift apart silently otherwise — the sentence is what a user reads when
     // they mistyped one. This is the check that keeps them the same list.
-    const sentence = t('command.needAction', 'en');
+    const sentence = withLocale('en', () => t('command.needAction'));
     for (const action of ACTIONS) {
         assert.ok(sentence.includes(action), `the sentence does not name "${action}"`);
     }
     // And in the other language, where the same list is spelled differently.
-    const chinese = t('command.needAction', 'zh-cn');
+    const chinese = withLocale('zh-cn', () => t('command.needAction'));
     for (const action of ACTIONS) {
         assert.ok(chinese.includes(action), `the Chinese sentence does not name "${action}"`);
     }

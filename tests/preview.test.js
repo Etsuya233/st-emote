@@ -33,6 +33,7 @@ import { escapeText } from '../core/escape.js';
 import { CATALOGS } from '../core/i18n.js';
 import { buildPreview, formatPreview } from '../core/preview.js';
 import { STICKER_CLASS } from '../core/render.js';
+import { withLocale } from './contract/locale.js';
 
 const packs = [
     {
@@ -219,12 +220,12 @@ test('text with no token in it says so instead of reporting a miss', () => {
 
     assert.equal(preview.tokenCount, 0);
     assert.equal(preview.misses.length, 0);
-    assert.equal(formatPreview(preview, 'en'), CATALOGS.en['panel.previewEmpty']);
+    assert.equal(withLocale('en', () => formatPreview(preview)), CATALOGS.en['panel.previewEmpty']);
 });
 
 test('a preview where everything rendered needs no summary line', () => {
     const preview = buildPreview('[[sticker:daily:happy]]', buildEffectiveSet(packs, ['daily']));
-    assert.equal(formatPreview(preview, 'en'), '');
+    assert.equal(withLocale('en', () => formatPreview(preview)), '');
 });
 
 test('the summary names each distinct reason once, in the panel\'s language', () => {
@@ -234,14 +235,14 @@ test('the summary names each distinct reason once, in the panel\'s language', ()
         set,
     );
 
-    const english = formatPreview(preview, 'en');
+    const english = withLocale('en', () => formatPreview(preview));
     assert.match(english, /Not rendered/);
     assert.match(english, /no sticker of that label/);
     assert.match(english, /no pack of that name/);
     // Two tokens missed for the same reason, and the reason is said once.
     assert.equal(english.match(/no sticker of that label/g).length, 1);
 
-    const chinese = formatPreview(preview, 'zh-cn');
+    const chinese = withLocale('zh-cn', () => formatPreview(preview));
     assert.match(chinese, /未命中/);
     assert.notEqual(chinese, english);
 });
@@ -256,5 +257,5 @@ test('a miss reason the catalog has no sentence for falls back to its own name',
         misses: [{ reason: 'a-reason-nobody-translated' }],
         invalidSizes: [],
     };
-    assert.match(formatPreview(preview, 'en'), /a-reason-nobody-translated/);
+    assert.match(withLocale('en', () => formatPreview(preview)), /a-reason-nobody-translated/);
 });

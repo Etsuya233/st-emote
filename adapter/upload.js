@@ -23,15 +23,13 @@ import { newId } from './settings.js';
  * The reason an upload was refused, in words the panel can show as-is. The size
  * in the sentence is the core's `MAX_IMAGE_LABEL`, so the two cannot drift.
  *
- * Thrown as the message of the error the caller reports, which is why it takes
- * the locale rather than a context: this is reached before any panel is around.
+ * Thrown as the message of the error the caller reports.
  *
  * @param {string} reason - An `ImageAcceptance` reason.
- * @param {string} [locale] - SillyTavern's UI locale.
  * @returns {string}
  */
-export function uploadRefusalMessage(reason, locale) {
-    return t(reason === 'too-large' ? 'upload.tooLarge' : 'upload.unsupportedFormat', locale, {
+export function uploadRefusalMessage(reason) {
+    return t(reason === 'too-large' ? 'upload.tooLarge' : 'upload.unsupportedFormat', {
         limit: MAX_IMAGE_LABEL,
     });
 }
@@ -47,13 +45,12 @@ export function uploadRefusalMessage(reason, locale) {
  * @param {any} context
  * @param {File|{name: string, size: number}} file
  * @param {string} stickerId
- * @param {string} [locale] - Only used to word a refusal.
  * @returns {Promise<string>}
  */
-export async function uploadStickerImage(context, file, stickerId, locale) {
+export async function uploadStickerImage(context, file, stickerId) {
     const accepted = acceptImageFile(file);
     if (!accepted.ok) {
-        throw new Error(uploadRefusalMessage(accepted.reason, locale));
+        throw new Error(uploadRefusalMessage(accepted.reason));
     }
     return uploadImage(context, await readAsBase64(file), accepted.format, stickerId);
 }

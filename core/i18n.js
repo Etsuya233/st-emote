@@ -25,6 +25,11 @@
  * panel does not have. If a sentence ever does have to be assembled into markup
  * beside a user's own value, `escapeText` on that value is the fix — and it
  * belongs at the call site, where the reader can see what is being assembled.
+ *
+ * **The locale is ambient, not threaded.** The adapter resolves the client's one
+ * fact and publishes it here with `setLocale`; from then on `t(key, values)` reads
+ * it, so no function carries a `locale` parameter. A test that wants the other
+ * catalog publishes it the same way, with `setLocale`.
  */
 
 import { CATALOG_SCRIPTS, CATALOGS, DEFAULT_LOCALE, SHIPPED_LOCALES } from './i18n-catalogs.js';
@@ -33,6 +38,26 @@ export { CATALOGS, DEFAULT_LOCALE };
 
 /** A BCP-47 script subtag: four letters, title case (`Hans`). */
 const SCRIPT_PATTERN = /^[a-z]{4}$/i;
+
+/**
+ * The locale every `t` call reads.
+ *
+ * The adapter owns the one fact — which language the client is in — and
+ * publishes it with `setLocale`. A module-level value rather than a parameter
+ * because it is genuinely process state: SillyTavern reloads the page on a
+ * language change, so it cannot go stale underneath a running extension
+ * (`adapter/locale.js` is where that reasoning lives).
+ */
+let activeLocale = DEFAULT_LOCALE;
+
+/**
+ * Publish the client's locale for every later `t` call. Idempotent.
+ *
+ * @param {unknown} locale
+ */
+export function setLocale(locale) {
+    activeLocale = resolveLocale(locale);
+}
 
 /**
  * The catalog a client locale reads, given the id `getCurrentLocale()` reports.
@@ -106,25 +131,28 @@ export function tKeys(locale = DEFAULT_LOCALE) {
 }
 
 /**
- * The sentence for one key, in one locale.
+ * The sentence for one key, in the locale `setLocale` published.
  *
- * The lookup walks the requested locale and then the English source, so a key
- * added to `EN` and not yet translated reads as English instead of vanishing.
- * A key nobody defines comes back as its own name: a visible, reportable gap.
+ * The lookup walks that locale and then the English source, so a key added to
+ * `EN` and not yet translated reads as English instead of vanishing. A key
+ * nobody defines comes back as its own name: a visible, reportable gap.
  *
  * `count` picks the singular wording when the catalog has one. The rule is
  * "try `.one` first" rather than "every counted key must have a `.one`", so a
  * sentence that has no plural (the missing-packs header, "2 packs") is not
  * forced into one.
  *
+ * There is no locale argument: the language is the ambient value the adapter
+ * published, and a test that wants the other catalog calls `setLocale`. Naming a
+ * locale is the job of `setLocale`, `tKeys` and `resolveLocale`, which is where
+ * the BCP-47 reasoning lives.
+ *
  * @param {string} key
- * @param {string} [locale] - The client's locale id, as `getCurrentLocale()` gives it.
  * @param {Record<string, unknown>} [values] - Values for `{name}` placeholders.
  * @returns {string}
  */
-export function t(key, locale, values = {}) {
-    const resolved = resolveLocale(locale);
-    const catalog = CATALOGS[resolved] ?? CATALOGS[DEFAULT_LOCALE];
+export function t(key, values = {}) {
+    const catalog = CATALOGS[activeLocale] ?? CATALOGS[DEFAULT_LOCALE];
     const source = CATALOGS[DEFAULT_LOCALE];
 
     const singular = values.count === 1;

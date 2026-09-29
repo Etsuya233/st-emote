@@ -29,8 +29,9 @@
 import { conflictLogLine, findConflicts, formatConflicts } from '../core/conflict.js';
 import { findPackByName } from '../core/constraints.js';
 import { setPackInScope } from '../core/effective-set.js';
+import { t } from '../core/i18n.js';
 import { logError, logInfo } from './log.js';
-import { currentLocale, tr } from './locale.js';
+import { useClientLocale } from './locale.js';
 import { effectiveSetForMessage } from './render-common.js';
 import { rerenderChat } from './rendering.js';
 import { ensureSettings, setPackEnabled } from './settings.js';
@@ -89,6 +90,7 @@ let installed = false;
  * @returns {boolean} Whether the command is available.
  */
 export function installCommands(context) {
+    useClientLocale(context);
     if (installed) {
         return true;
     }
@@ -100,10 +102,10 @@ export function installCommands(context) {
         context.SlashCommandParser.addCommandObject(context.SlashCommand.fromProps({
             name: COMMAND_NAME,
             callback: (namedArgs, unnamedArgs) => runCommand(context, namedArgs, unnamedArgs),
-            returns: tr(context, 'command.returns'),
+            returns: t('command.returns'),
             namedArgumentList: buildNamedArguments(context),
             unnamedArgumentList: [context.SlashCommandArgument.fromProps({
-                description: tr(context, 'command.needAction'),
+                description: t('command.needAction'),
                 typeList: context.ARGUMENT_TYPE.STRING,
                 isRequired: true,
             })],
@@ -139,12 +141,12 @@ function buildNamedArguments(context) {
     return [
         context.SlashCommandNamedArgument.fromProps({
             name: 'pack',
-            description: tr(context, 'command.packArgument'),
+            description: t('command.packArgument'),
             typeList: context.ARGUMENT_TYPE.STRING,
         }),
         context.SlashCommandNamedArgument.fromProps({
             name: 'scope',
-            description: tr(context, 'command.scopeArgument', { scopes: SCOPE_LIST }),
+            description: t('command.scopeArgument', { scopes: SCOPE_LIST }),
             typeList: context.ARGUMENT_TYPE.STRING,
         }),
     ];
@@ -170,7 +172,7 @@ function helpHtml(context) {
     const items = examples
         .map((example) => `<li><code class="language-stscript">/${COMMAND_NAME} ${example}</code></li>`)
         .join('');
-    return `<div>${tr(context, 'command.help')}</div><ul>${items}</ul>`;
+    return `<div>${t('command.help')}</div><ul>${items}</ul>`;
 }
 
 /**
@@ -185,9 +187,10 @@ function helpHtml(context) {
  * @returns {Promise<string>}
  */
 export async function runCommand(context, namedArgs = {}, unnamedArgs = []) {
+    useClientLocale(context);
     const action = String(unnamedArgs?.[0] ?? '').trim().toLowerCase();
     if (!ACTIONS.includes(action)) {
-        return tr(context, 'command.needAction');
+        return t('command.needAction');
     }
     if (action === 'reload') {
         return reloadStEmote(context);
@@ -223,7 +226,7 @@ export async function runCommand(context, namedArgs = {}, unnamedArgs = []) {
 function reloadStEmote(context) {
     const repainted = rerenderChat(context);
     logInfo(`repainted the current chat on request (${repainted} message(s))`);
-    return tr(context, 'command.repainted', { count: repainted });
+    return t('command.repainted', { count: repainted });
 }
 
 /**
@@ -239,22 +242,21 @@ function reloadStEmote(context) {
  * @returns {string}
  */
 function reportConflicts(context) {
-    const locale = currentLocale(context);
     const effectiveSet = effectiveSetForMessage(context, -1);
     const conflicts = findConflicts(effectiveSet);
 
     if (conflicts.length === 0) {
         // A clean set says so rather than printing an empty list: "there is no
         // problem" and "the report is broken" look the same if one is blank.
-        const sentence = tr(context, 'conflict.none');
+        const sentence = t('conflict.none');
         logInfo(sentence);
         return sentence;
     }
     for (const conflict of conflicts) {
-        logInfo(conflictLogLine(conflict, locale));
+        logInfo(conflictLogLine(conflict));
     }
-    return `${tr(context, 'command.conflictsShown', { count: conflicts.length })}\n`
-        + formatConflicts(effectiveSet, locale);
+    return `${t('command.conflictsShown', { count: conflicts.length })}\n`
+        + formatConflicts(effectiveSet);
 }
 
 /**
@@ -275,21 +277,21 @@ function reportConflicts(context) {
 async function setPackEnabledInScope(context, enabled, namedArgs) {
     const packName = String(namedArgs?.pack ?? '').trim();
     if (packName === '') {
-        return tr(context, 'command.needPack', { command: `/${COMMAND_NAME}` });
+        return t('command.needPack', { command: `/${COMMAND_NAME}` });
     }
     if (!findPackByName(ensureSettings(context).packs, packName)) {
-        return tr(context, 'command.unknownPack', { name: packName });
+        return t('command.unknownPack', { name: packName });
     }
 
     const scope = String(namedArgs?.scope ?? '').trim().toLowerCase() || 'global';
     if (!SCOPES.includes(scope)) {
-        return tr(context, 'command.unknownScope', {
+        return t('command.unknownScope', {
             scope: namedArgs?.scope ?? '',
             scopes: SCOPE_LIST,
         });
     }
     if (scope === 'character' && !getCurrentCharacter(context)) {
-        return tr(context, 'command.noCharacter');
+        return t('command.noCharacter');
     }
 
     if (scope === 'global') {
@@ -304,8 +306,8 @@ async function setPackEnabledInScope(context, enabled, namedArgs) {
     }
 
     rerenderChat(context);
-    return tr(context, enabled ? 'command.enabled' : 'command.disabled', {
+    return t(enabled ? 'command.enabled' : 'command.disabled', {
         name: packName,
-        scope: tr(context, `scope.${scope}`),
+        scope: t(`scope.${scope}`),
     });
 }

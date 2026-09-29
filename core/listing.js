@@ -5,8 +5,6 @@ import { normalizeLabel } from './normalize.js';
  * @typedef {Object} ListingOptions
  * @property {'simple'|'full'|string} [mode='full'] - `simple` prints bare
  *   labels, `full` (and anything unrecognized) prints `pack:label` rows.
- * @property {string} [locale='en'] - SillyTavern UI locale; only used to pick
- *   the wording of the empty listing.
  */
 
 /**
@@ -41,7 +39,7 @@ export function buildListing(effectiveSet, options = {}) {
         // comes from the same catalog as the panel, so the two cannot end up
         // disagreeing about what this extension calls an empty set — and the
         // listing is the one place where the language reaches the *prompt*.
-        return t('listing.empty', options.locale);
+        return t('listing.empty');
     }
     return rows.join('\n');
 }

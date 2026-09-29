@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { buildEffectiveSet } from '../core/effective-set.js';
 import { buildListing } from '../core/listing.js';
+import { withLocale } from './contract/locale.js';
 
 const packs = [
     {
@@ -52,8 +53,8 @@ test('the listing never contains a description', () => {
 test('an empty effective set expands to the localized empty word', () => {
     const set = buildEffectiveSet(packs, []);
     assert.equal(buildListing(set), 'none');
-    assert.equal(buildListing(set, { locale: 'zh-cn' }), '无');
-    assert.equal(buildListing(set, { locale: 'zh' }), '无');
+    assert.equal(withLocale('zh-cn', () => buildListing(set)), '无');
+    assert.equal(withLocale('zh', () => buildListing(set)), '无');
 });
 
 test('a pack whose stickers are all unlabeled is still empty', () => {

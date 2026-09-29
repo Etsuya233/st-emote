@@ -114,17 +114,16 @@ export function formatConflictPacks(conflict) {
  * user who just fixed a conflict needs to be able to tell.
  *
  * @param {import('./effective-set.js').EffectiveSet} effectiveSet
- * @param {string} [locale] - SillyTavern's UI locale.
  * @returns {string}
  */
-export function formatConflicts(effectiveSet, locale) {
+export function formatConflicts(effectiveSet) {
     const conflicts = findConflicts(effectiveSet);
     if (conflicts.length === 0) {
-        return t('conflict.none', locale);
+        return t('conflict.none');
     }
     return [
-        t('conflict.header', locale, { count: conflicts.length }),
-        ...conflicts.map((conflict) => t('conflict.row', locale, {
+        t('conflict.header', { count: conflicts.length }),
+        ...conflicts.map((conflict) => t('conflict.row', {
             label: conflict.label,
             packs: formatConflictPacks(conflict),
         })),
@@ -140,11 +139,10 @@ export function formatConflicts(effectiveSet, locale) {
  * a single `st-emote` filter and the conflicts sit in the middle of it.
  *
  * @param {Conflict} conflict
- * @param {string} [locale]
  * @returns {string}
  */
-export function conflictLogLine(conflict, locale) {
-    return t('conflict.logLine', locale, {
+export function conflictLogLine(conflict) {
+    return t('conflict.logLine', {
         label: conflict.label,
         packs: formatConflictPacks(conflict),
     });
