@@ -126,3 +126,11 @@ SETUP AND TOOLS
 ### 实际做了什么
 
 见下方各提交。控件清单快照 `git diff` 为空。
+
+### 包列表的滚动区后来去掉了（本票的「已知取舍」第一条被推翻）
+
+`.st-emote-packs` 那圈 `┌ 滚动区（max-height）┐` 与配套的 `max-height: 55vh / overflow-y: auto / overscroll-behavior: contain` **已经删掉**。本票选它时权衡的是「嵌套滚动」对「设置被推出面板底」，真机上看下来前者更难受：**两层滚动条同时存在，鼠标停在列表上滚到尽头还要再滚一次才出得来面板**（`overscroll-behavior` 只把手势交出去，交出去之前那一段仍然是两层的）。现在整块面板是一列，滚动交给客户端的抽屉自己。
+
+- 「已知取舍」第一条（嵌套滚动）与「手动验收项」里关于 `overscroll-behavior` 的那一条就此作废，其余取舍不动。
+- 顺带删掉钉着它的那条测试（`readStyleSheet()` 查 `.st-emote-packs` 的 `max-height`），`.st-emote-packs` 退回 `QUERY_HOOKS` 里那个「只带 id、没有自己外观的容器」。
+- 「搜索框与新建行在列表之前」这条不变，所以找到列表仍然不需要先滚过设置——本票真正要治的病（主内容压在设置后面）没有被这条回退带回来。

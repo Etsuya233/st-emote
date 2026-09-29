@@ -56,9 +56,17 @@ export const FREE_ICON_CODEPOINTS = {
     exportZip: 0x0f1c6, // fa-file-zipper
     deletePack: 0x0f2ed, // fa-trash-can
     deleteSelected: 0x0f829, // fa-trash-arrow-up
+    batchMode: 0x0f14a, // fa-square-check
+    // ── the editor a grid cell opens ────────────────────────────────────────
+    closeEditor: 0x0f00d, // fa-xmark
     // ── one 表情 in a pack ──────────────────────────────────────────────────
     replaceImage: 0x0f1c5, // fa-file-image
     deleteSticker: 0x0f1f8, // fa-trash
+    // ── marks a grid cell wears rather than buttons it sits on ──────────────
+    externalMark: 0x0f0c1, // fa-link (the same glyph as `addImageUrl`)
+    pickedMark: 0x0f00c, // fa-check
+    expandMark: 0x0f13a, // fa-circle-chevron-down (the client's own glyph)
+    collapseMark: 0x0f139, // fa-circle-chevron-up
     // ── the client's own collapsible headers ───────────────────────────────
     sectionChevronDown: 0x0f13a, // fa-circle-chevron-down
     sectionChevronUp: 0x0f139, // fa-circle-chevron-up
@@ -83,8 +91,14 @@ export const FREE_ICON_CLASSES = {
     exportZip: 'fa-file-zipper',
     deletePack: 'fa-trash-can',
     deleteSelected: 'fa-trash-arrow-up',
+    batchMode: 'fa-square-check',
+    closeEditor: 'fa-xmark',
     replaceImage: 'fa-file-image',
     deleteSticker: 'fa-trash',
+    externalMark: 'fa-link',
+    pickedMark: 'fa-check',
+    expandMark: 'fa-circle-chevron-down',
+    collapseMark: 'fa-circle-chevron-up',
     sectionChevronDown: 'fa-circle-chevron-down',
     sectionChevronUp: 'fa-circle-chevron-up',
 };
