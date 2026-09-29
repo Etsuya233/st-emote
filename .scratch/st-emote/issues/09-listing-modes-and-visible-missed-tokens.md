@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — 生效集与宏；05 — 旧版本兼容路径与产出统一；07 — 调试工具、操作入口、本地化与文档
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 这两件都落在 `core/render.js` 的输出与它的契约测试上，所以放一张票。**顺序是 ① 先做**——它不动渲染，只动清单与文档；② 改完之后「未命中」的断言要整体翻面，两者混着做，失败会互相掩盖。
 
@@ -12,11 +12,11 @@
 
 ## ① 清单的两档
 
-- [ ] `{{st-emote::simple}}` 每行一个 `包名:标签`
-- [ ] `{{st-emote::full}}` 每行一个 `包名:标签 (描述)`；**描述为空时省略括号**，整段退化成一个 `包名:标签`（因此无描述的表情在 `full` 下与 `simple` 完全相同——这是有意的，要补一条测试说明）
-- [ ] 无参数 `{{st-emote}}` 等同 `::full`
-- [ ] 生效集为空时仍展开成目录里的 `listing.empty`（中英各一份，票 07 立的规矩）
-- [ ] 一行一个表情成立：描述里不能有换行
+- [x] `{{st-emote::simple}}` 每行一个 `包名:标签`
+- [x] `{{st-emote::full}}` 每行一个 `包名:标签 (描述)`；**描述为空时省略括号**，整段退化成一个 `包名:标签`（因此无描述的表情在 `full` 下与 `simple` 完全相同——这是有意的，要补一条测试说明）
+- [x] 无参数 `{{st-emote}}` 等同 `::full`
+- [x] 生效集为空时仍展开成目录里的 `listing.empty`（中英各一份，票 07 立的规矩）
+- [x] 一行一个表情成立：描述里不能有换行
 
 ### 实现要点
 
@@ -37,12 +37,12 @@
 
 ## ② 未命中不再剔除标记
 
-- [ ] 任何一种未命中（`pack-not-found` / `pack-not-enabled` / `label-not-found` / `ambiguous-bare-label` / `image-missing` / `external-link-failed`）之后，**标记文本留在聊天里**，形态与用户写的一致
-- [ ] 留下的文本是**字面文本**，不是会被浏览器当成元素的标记
-- [ ] `image-missing` 与 `external-link-failed`（图挂掉之后才判出来的两种）同样退回文本，而不是留一个裂图图标
-- [ ] 控制台照旧记那一行未命中
-- [ ] 两条渲染路径表现一致；预览（试渲染）同样显示这段文本
-- [ ] 关闭扩展时，已渲染的图退回标记——**这条本来就成立，本票不得把它弄坏**（没有新元素被插进 DOM，所以 `adapter/restore.js:30` 的选择器不需要动）
+- [x] 任何一种未命中（`pack-not-found` / `pack-not-enabled` / `label-not-found` / `ambiguous-bare-label` / `image-missing` / `external-link-failed`）之后，**标记文本留在聊天里**，形态与用户写的一致
+- [x] 留下的文本是**字面文本**，不是会被浏览器当成元素的标记
+- [x] `image-missing` 与 `external-link-failed`（图挂掉之后才判出来的两种）同样退回文本，而不是留一个裂图图标
+- [x] 控制台照旧记那一行未命中
+- [x] 两条渲染路径表现一致；预览（试渲染）同样显示这段文本
+- [x] 关闭扩展时，已渲染的图退回标记——**这条本来就成立，本票不得把它弄坏**（没有新元素被插进 DOM，所以 `adapter/restore.js:30` 的选择器不需要动）
 
 ### 实现要点
 
@@ -86,3 +86,35 @@
 - **清单里只有数据，没有一句「你应该这样用」之类的指令文本。** `::full` 加了描述之后 temptation 更大——描述是写给模型看的自然语言，很容易变成偷偷加指示的地方。这条边界（`README.md:100-107`）不动：描述就是描述，不改写成祈使句。
 - **留下的标记文本不可点击、也没有 tooltip 说明为什么没命中。** 理由只有一个：它就是用户写下的原文，加工它就不再是「不剔除」而是「换了个东西显示」，那又回到占位符方案的全部代价里。未命中的原因仍然在控制台（`adapter/render-common.js:226`），排错路径没变。
 - **无参数 `{{st-emote}}` 展开成 `full`，比改之前长。** 这是这次明确选定的默认值。代价是用户若不写档位，提示词会明显变长；好处是模型第一次就看得见表情的画面内容，少一轮「这个表情到底是什么样」的来回。
+
+## Comments
+
+实现完毕，`npm test` 356 项全过、无 skip。核心改动很小，大头在文档与断言。
+
+**实际做了什么**
+
+① `core/listing.js`：`rows.push` 按票里说的扩成三段拼装。`simple` → `包名:标签`，其余 → `包名:标签 (描述)`（描述为空白串时省略括号）。默认 mode、`adapter/macro.js` 的 `defaultValue: 'full'`、旧引擎的 `registerMacro(…, 'full')` **一行没动**，`git diff` 里没有 `adapter/macro.js`——这与「实现要点」里的预判一致。`validateDescription` 那条 load-bearing 约束写进了 `buildListing` 的注释。文档侧：`CONTEXT.md`（清单定义改写成两档 + 冲突里那句删掉）、`README.md`（宏表、那条 `::simple` 的提示、冲突那节）、`spec.md`（`:23` Solution、`:62-63` 用户故事 35/36、`:83` 用户故事 56、`:168` 渲染规则、`:186-188` 宏、`:253` 含糊点）、两份目录的 `macro.returns` / `macro.modeDescription` / `panel.macroExample`。
+
+② `core/render.js`：`renderTokenHtml` 的未命中分支从 `return ''` 变成 `return escapeText(marker)`，条件转义的**理由**（`allowStickerTag` 把 sticker 标签开给了 DOMPurify）写进了函数里的注释，它现在永远不返回空串。`adapter/rendering.js` 两处照票子说的改：`if (!html) { element.remove(); }` 整段删掉，`error` 守卫那步换成 `target.replaceWith(document.createTextNode(target.getAttribute(TOKEN_ATTRIBUTE)))`（需要 import `TOKEN_ATTRIBUTE`）。`adapter/restore.js` 的选择器没动，也确实不需要动。
+
+**票子没提、我自己做的判断**
+
+- **描述在行内做了 `trim()`**（`core/listing.js`）。描述是按用户原文存的，界面上留一个尾随空格会让 `包名:标签 ( … )` 这种行看起来是坏的；只裁空白，不改一个字。相应地，**全空白描述按空描述处理**——`tests/listing.test.js` 里那条「无描述时两档相同」同时钉了 `''` 和 `'   '` 两种。
+- **`spec.md` 的用户故事 35 与 36 一并改写了。** 票子只点了三处（`:24` `:83` `:168`），但 35 写的是「清单只列标签、还是列全限定名」、36 写的是「让清单里永远不出现描述」——档位整体挪一位之后这两条字面上已经不成立，留着会是一份自相矛盾的规格。35 改成「只列 `包名:标签` 还是带上描述」，36 改成「描述为空时退化成一个 `包名:标签`」，正好把新行为里值得承诺的那一条单独写成故事。
+- **`CONTEXT.md` 新增了一条「未命中 (Miss)」。** 票子只要求改清单与冲突两处，但未命中的**显示形态**现在是一条需要被复述的规则（「留在聊天里、字面文本」），而术语表是代码与文档共用的那份。写进去之后 `README.md` 与 `spec.md` 的说法都有出处。
+- **`panel.previewMisses` 没动。** 票子说「仍然准确……措辞可以顺一下」。预览框里现在会同时显示那段标记文本，「Not rendered: no sticker of that label」并没有因此说错什么；改它会牵动 `tests/i18n.test.js` 与 `tests/panel.test.js` 的期望，而收益是零。这条留给将来觉得碍眼的人。
+
+**翻转而不是删除的断言**
+
+票子点名要翻的两条都翻了：`tests/listing.test.js` 里 `'keeps conflicts as duplicates'`（新 `simple` 下 `Happy`/`happy` 变成 `daily:Happy` 和 `roleplay:happy` 两行不同内容，另加了一条断言行数与去重后行数相等）以及 `'the listing never contains a description'`（改成只对 `simple` 成立，并额外断言 `full` 下确实有描述）。② 那边同样有一批：「消失」全部翻成「标记还在，且是这一段文本」，涉及 `tests/render.test.js` 六条、`tests/render-paths.test.js` 两条（其中 `a pack that stops being enabled` 的注释原来把「必须从源重渲染」的理由写成「miss 把 token 从 DOM 里删掉了」，这个理由现在不成立，已改写）、`tests/preview.test.js` 一条、`tests/panel.test.js` 一条、`tests/dom-path.test.js` 一条。
+
+**新行为独有的钉子**
+
+- HTML 形态的未命中在最终 DOM 里是**文本节点而不是元素**：`tests/render.test.js` 一条（`renderHtml` + 解析成 DOM 后断言 `childElementCount === 0` 且 `querySelector('sticker') === null`）、`tests/dom-path.test.js` 一条（真实走 `renderStickerElements` 那条被删掉分支的位置）。
+- **代码块里的未命中仍然什么都不渲染**：`tests/render.test.js` 一条，断言输出与源串逐字相同且 `misses.length === 0`——代码块的跳过由标签扫描决定，与命不命中无关，所以那一处连未命中都不算。
+- **两种形态观感一致**：`tests/render-paths.test.js` 一条，raw tag 与 escaped tag 两种输入喂给两条路径，期望同一段文本。
+- **`external-link-failed` 单独一条**（`tests/dom-path.test.js`）。它与 `image-missing` 共用同一行代码、只有 `reason` 不同，而这一行以前只有 `image-missing` 被测到。
+
+**没有验证的**
+
+上面「待人工验收」那三条**一条都没做**：都需要真实 SillyTavern 客户端。测试里能证明的只是「钩子路径交出去的是已转义过的字符串」，**ST 的 markdown 步骤会不会把它二次转义成 `&amp;lt;` 没有验证**；`contract/render-contract.js` 里唯一模拟的客户行为仍然只有净化补 `custom-` 前缀那一处，本票没有扩大它。`::full` 在几十张表情的包上到底有多长，也没有实测。

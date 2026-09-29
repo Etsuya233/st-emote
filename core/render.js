@@ -155,9 +155,11 @@ function stickerHtml(pack, sticker, options, invalidSizes, marker) {
 }
 
 /**
- * Resolve one token and return its `<img>` markup, or an empty string when the
- * token misses. Every miss is appended to `misses`. Exported so the DOM path
- * can render the raw HTML-tag form through the exact same rules.
+ * Resolve one token and return its `<img>` markup, or the marker it stands for
+ * as escaped text when the token misses. Every miss is appended to `misses`.
+ * Exported so the DOM path can render the raw HTML-tag form through the exact
+ * same rules — including the miss, which is why this function never returns an
+ * empty string.
  *
  * @param {{raw: string, packName: string|null, label: string}} token
  * @param {import('./effective-set.js').EffectiveSet} effectiveSet
@@ -169,17 +171,28 @@ function stickerHtml(pack, sticker, options, invalidSizes, marker) {
  * @returns {string}
  */
 export function renderTokenHtml(token, effectiveSet, misses, options = {}, invalidSizes = []) {
+    const marker = tokenText(token, options);
     const result = resolveToken(token, effectiveSet, misses);
     if (!result) {
-        return '';
+        // A miss leaves its marker behind, and leaves it as **literal text** —
+        // the same thing the between-token text already is, which is why this
+        // is not a separate code path.
+        //
+        // Escaped on every path, the HTML one included. `allowStickerTag`
+        // (`adapter/rendering.js`) has explicitly opened the sticker tag to the
+        // client's DOMPurify, so an unescaped `<sticker>daily:happy</sticker>`
+        // would survive sanitization as a live element: the brackets would
+        // vanish, the user would see a bare `daily:happy`, and the miss would
+        // be half invisible — worse than showing the marker or hiding it, and
+        // inconsistent with the `[[…]]` form sitting right next to it.
+        //
+        // Escaping also settles the raw / `&lt;` round trip `tokenText` warns
+        // about: it rebuilds the marker from the parsed parts, so what arrives
+        // here is plain text on both paths and comes back out as the form the
+        // user wrote.
+        return escapeText(marker);
     }
-    return stickerHtml(
-        result.pack,
-        result.sticker,
-        options,
-        invalidSizes,
-        tokenText(token, options),
-    );
+    return stickerHtml(result.pack, result.sticker, options, invalidSizes, marker);
 }
 
 /**

@@ -226,8 +226,11 @@ test('an invalid 间隙 is treated as unset, exactly like a size', () => {
 });
 
 test('the 间隙 travels with the image, not with the marker a miss leaves', () => {
-    // A 未命中 leaves nothing behind: the marker is removed, and there is no
-    // element for a margin to apply to. Only a rendered `<img>` gets one.
+    // A 未命中 leaves its marker behind as plain text, and text carries no
+    // inline style — so the declaration appears exactly once, on the `<img>`.
+    // This is the assertion that keeps the two tickets from drifting into each
+    // other: a miss used to be deleted outright, and this test was written
+    // against that. It now pins the newer behaviour instead.
     const { html, misses } = renderText(
         'a [[sticker:daily:nope]] b [[sticker:daily:happy]]',
         set,
@@ -235,7 +238,7 @@ test('the 间隙 travels with the image, not with the marker a miss leaves', () 
     );
     assert.equal(misses.length, 1);
     assert.equal(html.match(/margin:/g).length, 1);
-    assert.match(html, /^a {2}b <img [^>]*style="max-height: 3em; object-fit: contain; margin: 0 0\.5em"/);
+    assert.match(html, /^a \[\[sticker:daily:nope\]\] b <img [^>]*style="max-height: 3em; object-fit: contain; margin: 0 0\.5em"/);
 });
 
 test('each 尺寸集 gaps in its own direction', () => {

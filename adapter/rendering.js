@@ -20,7 +20,7 @@ import {
     blockBoundaryMode,
     isBlockPlacement,
 } from '../core/placement.js';
-import { STICKER_CLASS, renderText, renderTokenHtml } from '../core/render.js';
+import { STICKER_CLASS, TOKEN_ATTRIBUTE, renderText, renderTokenHtml } from '../core/render.js';
 import { parseTokenBody, tokenPrefixes } from '../core/token.js';
 import {
     eachMessageElement,
@@ -120,10 +120,9 @@ function renderStickerElements(textElement, effectiveSet, options) {
             options,
             invalidSizes,
         );
-        if (!html) {
-            element.remove();
-            continue;
-        }
+        // A miss comes back as the marker, escaped — so this replaces the
+        // element with a text node rather than dropping it, and there is no
+        // empty result to branch on.
         replaceWithHtml(element, html);
         rewritten += 1;
     }
@@ -429,8 +428,8 @@ function renderMessageById(context, messageId) {
 }
 
 /**
- * Remove an image that failed to load and leave a console trace. Missing
- * files and dead external links both surface here.
+ * Give an image that failed to load back its marker, and leave a console trace.
+ * Missing files and dead external links both surface here.
  *
  * The check is on the base class, which every sticker image carries whatever its
  * 投放方式; a block image is still one of ours.
@@ -452,7 +451,12 @@ function handleImageError(event) {
     const qualified = `${target.getAttribute('data-st-emote-pack') ?? ''}`
         + `:${target.getAttribute('data-st-emote-label') ?? ''}`;
     logInfo(`sticker not rendered (${reason}): ${qualified} (${src})`);
-    target.remove();
+    // An image that cannot be drawn falls back to the marker it stands for,
+    // rather than leaving a broken-image icon in the reply. The same line
+    // `adapter/restore.js` uses, and for the same reason: a sticker that could
+    // not be shown gives its marker back. The attribute is on the image already,
+    // so nothing has to be re-derived from the settings.
+    target.replaceWith(document.createTextNode(target.getAttribute(TOKEN_ATTRIBUTE)));
 }
 
 /**

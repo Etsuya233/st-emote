@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { buildEffectiveSet } from '../core/effective-set.js';
 import { PLACED_ATTRIBUTE, PLACEMENT_ATTRIBUTE } from '../core/placement.js';
 import { STICKER_CLASS, renderHtml, renderText } from '../core/render.js';
-import { messageText, stickerMarkup } from './contract/render-contract.js';
+import { messageText, parseHtml, stickerMarkup } from './contract/render-contract.js';
 
 const packs = [
     {
@@ -57,29 +57,29 @@ test('renderHtml inserts one image per repeated HTML-tag token', () => {
     assert.equal(html.match(/<img /g).length, 2);
 });
 
-test('an unknown label disappears and is reported', () => {
+test('an unknown label keeps its marker and is reported', () => {
     const { html, misses } = renderHtml('<p>a [[sticker:daily:angry]] b</p>', setWith(['daily']));
-    assert.equal(html, '<p>a  b</p>');
+    assert.equal(html, '<p>a [[sticker:daily:angry]] b</p>');
     assert.deepEqual(misses, [
         { reason: 'label-not-found', raw: '[[sticker:daily:angry]]', packName: 'daily', label: 'angry' },
     ]);
 });
 
-test('a token for a disabled pack disappears and is reported', () => {
+test('a token for a disabled pack keeps its marker and is reported', () => {
     const { html, misses } = renderHtml('[[sticker:roleplay:happy]]', setWith(['daily']));
-    assert.equal(html, '');
+    assert.equal(html, '[[sticker:roleplay:happy]]');
     assert.equal(misses[0].reason, 'pack-not-enabled');
 });
 
-test('a bare label disappears when several packs are enabled', () => {
+test('a bare label keeps its marker when several packs are enabled', () => {
     const { html, misses } = renderHtml('[[sticker:happy]]', setWith(['daily', 'roleplay']));
-    assert.equal(html, '');
+    assert.equal(html, '[[sticker:happy]]');
     assert.equal(misses[0].reason, 'ambiguous-bare-label');
 });
 
-test('a sticker without an image disappears and is reported', () => {
+test('a sticker without an image keeps its marker and is reported', () => {
     const { html, misses } = renderHtml('[[sticker:daily:no image]]', setWith(['daily']));
-    assert.equal(html, '');
+    assert.equal(html, '[[sticker:daily:no image]]');
     assert.equal(misses[0].reason, 'image-missing');
 });
 
@@ -88,6 +88,17 @@ test('tokens inside a code element are untouched', () => {
     const { html, misses } = renderHtml(source, setWith(['daily']));
     assert.equal(html, source);
     assert.equal(misses.length, 0);
+});
+
+test('a missed token inside a code element still renders nothing', () => {
+    // The code-block skip is decided by the tag walk, not by whether a token
+    // would have hit, so a miss in there is still plain untouched text: no
+    // image, and — the point of it — no 未命中 either.
+    const source = '<p>see <code>[[sticker:daily:angry]]</code> here</p>';
+    const { html, misses } = renderHtml(source, setWith(['daily']));
+    assert.equal(html, source);
+    assert.equal(misses.length, 0);
+    assert.equal(messageText(html), 'see [[sticker:daily:angry]] here');
 });
 
 test('tokens inside a pre block are untouched', () => {
@@ -142,9 +153,9 @@ test('renderText replaces a token and escapes the rest', () => {
     assert.equal(html.endsWith(' c'), true);
 });
 
-test('renderText removes a missed token', () => {
+test('renderText keeps a missed token, escaped like the text around it', () => {
     const { html, misses } = renderText('x [[sticker:nope]] y', setWith(['daily']));
-    assert.equal(html, 'x  y');
+    assert.equal(html, 'x [[sticker:nope]] y');
     assert.equal(misses.length, 1);
 });
 
@@ -202,9 +213,33 @@ test('renderText honours a custom HTML-tag name', () => {
     assert.match(html, /^<img /);
 });
 
-test('renderText keeps a missed HTML-tag token removed', () => {
+test('renderText escapes a missed HTML-tag token back to the form the user wrote', () => {
     const { html, misses } = renderText('x <sticker>angry</sticker> y', setWith(['daily']));
-    assert.equal(html, 'x  y');
+    assert.equal(html, 'x &lt;sticker&gt;angry&lt;/sticker&gt; y');
+    assert.equal(misses[0].reason, 'label-not-found');
+    // A miss is ordinary text, so it reads back as the text it stands for.
+    assert.equal(messageText(html), 'x <sticker>angry</sticker> y');
+});
+
+test('a missed HTML-tag token is a text node on the HTML path, not a live element', () => {
+    // The hook path emits the un-escaped form into markup the client has
+    // explicitly allowed through DOMPurify, so an unescaped miss would survive
+    // sanitization as a real element: the brackets would vanish and the miss
+    // would be half invisible. The final DOM is where that shows.
+    const { html } = renderHtml('<p>a <sticker>daily:angry</sticker> b</p>', setWith(['daily']));
+    const root = parseHtml(html);
+    const paragraph = root.querySelector('.mes_text p');
+
+    assert.equal(root.querySelector('sticker'), null);
+    assert.equal(paragraph.childElementCount, 0);
+    assert.equal(paragraph.textContent, 'a <sticker>daily:angry</sticker> b');
+    assert.equal(messageText(html), 'a <sticker>daily:angry</sticker> b');
+});
+
+test('a missed escaped HTML-tag token round-trips instead of double-escaping', () => {
+    const source = '<p>&lt;sticker&gt;daily:angry&lt;/sticker&gt;</p>';
+    const { html, misses } = renderHtml(source, setWith(['daily']));
+    assert.equal(html, source);
     assert.equal(misses[0].reason, 'label-not-found');
 });
 

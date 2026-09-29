@@ -809,8 +809,9 @@ test('the debug box says what did not render, in the panel\'s language', async (
         document.getElementById('st_emote_preview_run').click();
         await settle();
 
-        // The marker is gone from the preview exactly as it would be from a chat.
-        assert.equal(output.textContent, '');
+        // The marker stays, exactly as it would in a chat, and the line below
+        // still names the reason. Neither replaces the other.
+        assert.equal(output.textContent, '[[sticker:daily:nope]]');
         assert.match(note.textContent, /Not rendered/);
         assert.match(note.textContent, /no sticker of that label/);
     });

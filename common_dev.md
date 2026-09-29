@@ -9,7 +9,7 @@
 - **名称**：st-emote
 - **形态**：SillyTavern 扩展
 - **一句话**：模型在回复里用标记指名表情，扩展把标记渲染成表情图片。
-- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）、票 04（投放方式与尺寸）、票 05（旧版本兼容路径与产出统一）、票 06（存储与生命周期）、票 07（调试工具、操作入口、本地化与文档）与票 08（设置项：表情间隙、标记形态开关、总开关）已实现。票 09（渲染产物变更：清单两档、未命中不再剔除标记）已拆出、待实现；后续票据见 `.scratch/st-emote/issues/`。
+- **当前阶段**：票 01–09 全部已实现——01 闭环：一张表情能在消息里出现、02 语法/约束/处理范围、03 生效集与宏、04 投放方式与尺寸、05 旧版本兼容路径与产出统一、06 存储与生命周期、07 调试工具/操作入口/本地化与文档、08 设置项（表情间隙、标记形态开关、总开关）、09 渲染产物变更（清单两档、未命中不再剔除标记）。后续票据见 `.scratch/st-emote/issues/`。
 
 相关文档：
 
@@ -91,6 +91,7 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - 票 07 的适配层：`tests/commands.test.js`（驱动真实的 `runCommand`；注册只查客户端有没有那几个类，并检查「登记两次」这件事真的会挂）、`tests/panel.test.js` 里新加的几条（整个面板是否双语、用户输入是否只当文本、试渲染不碰聊天、粘进去的文本是否走了客户端的 markdown 步骤、重渲染按钮）。
 - 票 08 的纯核心：`tests/size.test.js` 里的间隙各条（单轴、零、非法值当未设置、两个 placeholder 各是各的默认值、未命中留下的文本不吃尺寸集）、`tests/token.test.js` 里的形态开关（关掉的形态不是 token、预筛与扫描器答同一个问题、缺省即开）、`tests/preview.test.js` 无新增（形态经由 `renderOptions` 透传，两条真实路径的对照在 `render-paths.test.js`）。
 - 票 08 的适配层：`tests/render-paths.test.js` 加了「间隙到达的是图本身」与「关掉的形态在两条路径上都不生效」两组（都用共享契约断言，所以两边的差异会自己冒出来）；`tests/dom-path.test.js` 加了元素扫描读开关、两个都关时预筛短路、以及**承自票 07 遗留的那条日志字面断言**（未命中与非法尺寸两行前缀此前无人盯住，本票又走了一遍那条路径，是补上的时机）；`tests/panel.test.js` 加了形态开关、正则 JSON 随开关重生成、总开关实时退回标记、**总开关不压制试渲染**；`tests/commands.test.js` 加了 `on` / `off` 与宏空串；`tests/entry-disabled.test.js` 是**新文件**（`index.js` 每进程只跑一次，所以「启动即关」的客户端必须有自己的进程去观察）。
+- 票 09 的断言方向翻了一面：`tests/render-paths.test.js` 与 `tests/render.test.js` 里所有「未命中**消失**了」的期望都改成「**标记还在，且是这一段文本**」。`readText` / `visibleText` 两个助手没有新增任何能力——未命中现在贡献一段它们本来就看得见的普通文本。另有两条是新行为独有的钉子：HTML 形态的未命中在最终 DOM 里是文本节点（`render.test.js` 与 `dom-path.test.js` 各一条），以及代码块里的未命中仍然什么都不渲染、**连未命中都不算**（`render.test.js` 一条）。
 - 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀、**ST 切换语言后面板是否跟着变**（ST 自己会刷新页面，扩展只读一次语言）、**`SillyTavern.libs.showdown` 在真机上是否可用以及我们的开关是否够用**。
 - 票 08 追加的（同一类，都得在真机上看一眼）：**形态关掉后那份 prompt-only 正则 JSON 导入正则扩展的实际行为**（我们只断言了生成的 `findRegex` 字符串，正则扩展本身只能在真机验）；**间隙的观感**（inline 之间、块级之间、混排、窄面板与小字号下 `em` 是否还合适）；**流式生成途中改设置**；**总开关关掉后含块后图的聊天立刻退回标记**（必须走 restitch，见 `restore.js` 的注释）与再打开后图立刻回来；**多出的几个控件在一行里挤不挤**。
 
@@ -132,6 +133,16 @@ npm test         # node --test，发现并运行 tests/*.test.js
 `core/preview.js` 走 `renderHtml`（两条真实路径的终点），**不是** `renderText`：后者只改 token，既不搬 块后 的图，也不跳过代码块。
 
 粘贴的纯文本要变成 `renderHtml` 需要的消息体，这一步是**参数** `toMessageBody`，由 `adapter/debug-panel.js` 用**客户端自带的 showdown**（`SillyTavern.libs.showdown`，和 `archive.js` 用 `/lib/jszip.min.js` 是同一条规矩）来填。没有 showdown 就退回 `escapeText`（按纯文本处理），并且控制台会说明当时用的是哪一种。转换器的开关是**这个扩展自己定的**，不是客户的配置——只开了 spec 解析边界那几条真正需要的（围栏、表格）。
+
+### 清单两档与「未命中不剔除标记」（票 09）
+
+两件都只改**扩展吐出去的文本**，一个规则、一处实现：
+
+- **清单分两档**：`::full`（也是无参数时的默认）每行 `表情包名:标签 (描述)`，**描述为空时整段退化成一个 `表情包名:标签`**；`::simple` 每行 `表情包名:标签`，不带描述。**两档都带表情包名**——所以同一个标签在两个包里是两行不同的内容，`CONTEXT.md` 的「冲突」里不再有「清单出现重复行」那一半。`buildListing` 的默认 mode、`adapter/macro.js` 的 `defaultValue` 与旧引擎的 `registerMacro(…, 'full')` 都因为这个落法而**无需改动**。一行一个表情靠 `validateDescription` 禁换行成立，那条约束是 load-bearing 的，`core/listing.js` 的注释里点明了。
+- **未命中不剔除标记**：`core/render.js` 的 `renderTokenHtml` 命中时返回 `<img>`，未命中时返回 `escapeText(tokenText(token, options))`，因此它**永远不返回空串**。这一条让两处调用点各自塌缩成一行：`adapter/rendering.js` 里 `if (!html) { element.remove(); }` 整段删掉，`error` 守卫生效那步改成 `target.replaceWith(document.createTextNode(target.getAttribute(TOKEN_ATTRIBUTE)))`——**和 `adapter/restore.js` 是同一行代码**，语义也顺：「画不出来的表情退回标记」与「关掉扩展把标记放回去」。
+- **无条件转义，连 HTML 路径也是**。`allowStickerTag` 明确把 sticker 标签开给了 DOMPurify，所以原样吐一个 `<sticker>daily:happy</sticker>` 会活着穿过净化变成真元素，方括号消失、未命中半隐形，比显示或隐藏都更糟。`tests/render.test.js` 与 `tests/dom-path.test.js` 各有一条断言最终 DOM 里是**文本节点而不是元素**的测试钉住它。`tokenText` 从解析后的部分重建标记，所以这也顺带绕开了 raw / `&lt;` 的往返问题。
+- **被否掉的备选**：占位符元素（`<span>` 显示 `包名:标签` 的方框）。它会让 `adapter/restore.js` 的选择器必须放宽、`tests/contract/render-contract.js` 需要新的折叠能力，并且撞上 `core/render.js` 的 `markPlaced`——它用 `imgTag.slice(0, -1)` 往标签尾部塞属性、假设标签以 `>` 结尾，而 span 是 `<span …>文字</span>`」，塞进去属性就跑到文字后面去了。
+- **这是对票 02 用户故事 56 的反转**，`spec.md` 与 `README.md` 是**改写**而非补充。原始顾虑里「污染提示词」那一半由 prompt-only 正则（`promptOnly: true`，只清上下文、显示端照常）覆盖，所以实际放弃的只是观感。
 
 ## 待补充
 
