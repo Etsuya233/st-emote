@@ -57,10 +57,43 @@ export const CATALOG_SCRIPTS = {
 const EN = {
     // ── the panel's own words ──────────────────────────────────────────────
     'panel.intro':
-        'Upload images into a pack and give each sticker a label. '
-        + 'Enable a pack globally, per character or per chat to render a token in AI replies.',
+        'Upload images into a pack, give each one a label, and enable the pack '
+        + 'wherever you want its stickers to render.',
     'panel.introTokenCaption': 'A token looks like',
     'panel.tokenExample': '[[sticker:pack:label]]',
+
+    // The four block titles. The panel is a data page with settings attached,
+    // so the library comes first and the settings are the three blocks below
+    // it — and each one is named, because forty controls separated by a 6px
+    // difference in spacing and a hairline the client's own theme colour draws
+    // almost invisibly give the eye nowhere to land.
+    'block.library': 'Packs',
+    'block.rendering': 'Rendering',
+    'block.appearance': 'Appearance',
+    'block.tools': 'Setup and tools',
+
+    // The status line: what the current 作用域 actually make available, in the
+    // same 生效集 the macro listing and the debug preview read. Its counts are
+    // separate sentences rather than two values inside one, because `t` picks a
+    // singular wording from a single `count` and two counts in one sentence
+    // would agree with neither.
+    'panel.packCount': '{count} packs',
+    'panel.packCount.one': '{count} pack',
+    'panel.statusLabel': 'Active here',
+    // Shown in place of the counts while the 总开关 is off, because a count of
+    // what would be available is noise while nothing is being rendered.
+    'panel.statusOff':
+        'Rendering is off — every sticker on screen is back to its marker',
+
+    // The first-run card, shown only while the library is empty. Four steps, and
+    // the last one is the step everybody misses: without the macro in a preset
+    // the model is never told which labels exist, so it never writes a token.
+    'panel.startStep1': 'Name a pack, then press +.',
+    'panel.startStep2':
+        'Upload images into it and give each one a label — a token names the label.',
+    'panel.startStep3': 'Turn the pack on in Global, Character or Chat.',
+    'panel.startStep4':
+        'Put {{st-emote}} in a preset so the model knows what it may use.',
     // The panel's buttons are glyphs rather than words (ticket 11), which is a
     // trade the user is entitled to be told about in one place rather than
     // discovering one button at a time.
@@ -69,7 +102,10 @@ const EN = {
         + 'sentence is what a screen reader announces. The sections that hold an '
         + 'explanation or a sample start closed — open one when you need it.',
     'panel.renderUser': 'Render stickers in user messages',
-    'panel.enabled': 'Render stickers at all',
+    // "at all" read as a hedge on the 總開關 rather than as the thing it is: the
+    // one control the whole extension answers to, and the one whose state decides
+    // whether anything below it is doing anything.
+    'panel.enabled': 'Master switch: render stickers',
     'panel.enabledHint':
         'Turning this off puts every sticker already on screen back to its marker, and the '
         + '{{st-emote}} listing macro expands to nothing — with rendering off, a listing '
@@ -338,10 +374,24 @@ const EN = {
 const ZH_CN = {
     // ── 面板 ───────────────────────────────────────────────────────────────
     'panel.intro':
-        '把图片上传进一个表情包，并给每张表情填一个标签。在全局、某个角色或某个聊天里启用表情包，'
-        + 'AI 回复里的标记就会渲染成图片。',
+        '把图片上传进一个表情包，给每张填一个标签，再在需要它生效的地方启用这个包。',
     'panel.introTokenCaption': '标记的样子：',
     'panel.tokenExample': '[[sticker:表情包名:标签]]',
+
+    'block.library': '表情包',
+    'block.rendering': '渲染',
+    'block.appearance': '外观',
+    'block.tools': '接入与工具',
+
+    'panel.packCount': '{count} 个表情包',
+    'panel.packCount.one': '{count} 个表情包',
+    'panel.statusLabel': '当前生效',
+    'panel.statusOff': '渲染已关闭：屏幕上的表情全部退回原始标记',
+
+    'panel.startStep1': '起一个表情包名，按 + 新建。',
+    'panel.startStep2': '往里上传图片，并给每张填一个标签——标记指名的就是标签。',
+    'panel.startStep3': '在「全局 / 角色 / 聊天」里启用这个表情包。',
+    'panel.startStep4': '在预设里写上 {{st-emote}}，模型才知道自己可以用哪些表情。',
     'panel.iconHint':
         '下面那些按钮是图标：悬停一个就知道它是做什么的，读屏念出的也是同一句话。'
         + '带说明或示例的区块默认收起——需要的时候再展开。',
