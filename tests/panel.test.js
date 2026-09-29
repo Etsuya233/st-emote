@@ -1022,36 +1022,74 @@ test('every action button in the panel carries the one shared action-button clas
 });
 
 test('every class the panel puts on an element is either styled or a declared query hook', async () => {
-    // A class nobody styles and nobody queries is a class the next change cannot
-    // find, and the failure shows up as an element quietly looking like the
-    // default one. The classes in QUERY_HOOKS are the deliberate exception: they
-    // exist to be found — by a test, or by `showFieldHint` toggling a state — and
-    // adding one is a decision to record here rather than an oversight.
-    const rules = readStyleSheet();
+    // A class no stylesheet knows about is a class the next change cannot find,
+    // and the failure shows up as an element quietly looking like the default one.
+    //
+    // **Two panel states, not one.** Several classes only exist in some states —
+    // `st-emote-pack-missing` needs the server to report none of our files,
+    // `st-emote-delete-selected` needs a ticked sticker, `st-emote-input-bad` needs
+    // a refused size value — so a single ordinary render would check a third of
+    // the surface and pass anyway. The two states below are chosen to reach all of
+    // them.
+    //
+    // "Styled" means the class appears in *some* selector, not that it heads one:
+    // `.menu_button.st-emote-button` and `.st-emote-actions .st-emote-delete-pack`
+    // are the two rules written that way on purpose — the first to outrank the
+    // client's own `.menu_button`, the second to separate one action from the rest
+    // of its group — and neither would a lookup by exact key find.
+    //
+    // QUERY_HOOKS is the deliberate exception: a class that appears in no selector
+    // at all, put there to be found by a test. Adding one is a decision to record,
+    // not an oversight.
+    const known = styledClasses();
     const used = new Set();
+
     await withPanelMounted({}, ({ document }) => {
-        for (const element of document.querySelectorAll('#st_emote_drawer *')) {
-            for (const name of element.classList) {
-                if (name.startsWith('st-emote')) {
-                    used.add(name);
-                }
-            }
+        collectClasses(document, used);
+    });
+    // The states the plain fixture never reaches.
+    await withPanelMounted({ storedFiles: [] }, ({ document }) => {
+        for (const tick of document.querySelectorAll('.st-emote-sticker-tick')) {
+            tick.checked = true;
+            tick.dispatchEvent(new globalThis.window.Event('change'));
         }
+        const size = document.querySelector('.st-emote-size');
+        size.value = 'not a size';
+        size.dispatchEvent(new globalThis.window.Event('change'));
+        collectClasses(document, used);
     });
 
-    const orphaned = [...used]
-        .filter((name) => !QUERY_HOOKS.includes(name) && !(`.${name}` in rules))
+    const unknown = [...used]
+        .filter((name) => !known.has(name) && !QUERY_HOOKS.includes(name))
         .sort();
-    assert.deepEqual(orphaned, []);
+    assert.deepEqual(unknown, []);
 });
+
+/**
+ * Every `st-emote-*` class in force anywhere under the drawer.
+ *
+ * @param {Document} document
+ * @param {Set<string>} into
+ */
+function collectClasses(document, into) {
+    for (const element of document.querySelectorAll('#st_emote_drawer *')) {
+        for (const name of element.classList) {
+            if (name.startsWith('st-emote')) {
+                into.add(name);
+            }
+        }
+    }
+}
 
 test('every class the 尺寸 controls toggle is styled', async () => {
     // The two state classes `showFieldHint` flips. They are the panel's only
-    // classes applied from outside a markup template, so nothing else would notice
-    // if one of them lost its rule and the invalid state became invisible.
-    const rules = readStyleSheet();
+    // classes applied from outside a markup template, and neither appears on a
+    // mounted panel until a size value is refused — so nothing in the panel test
+    // would notice if one of them lost its rule and the invalid state went
+    // invisible exactly when it mattered.
+    const known = styledClasses();
     for (const name of ['st-emote-hint-bad', 'st-emote-input-bad']) {
-        assert.ok(`.${name}` in rules, `${name} has no rule`);
+        assert.ok(known.has(name), `${name} has no rule`);
     }
 });
 
@@ -1065,23 +1103,21 @@ test('every class the 尺寸 controls toggle is styled', async () => {
 const PRESENTATION_HOOKS = ['st-emote-button'];
 
 /**
- * Classes the panel applies to be *found* rather than to be styled: the per-pack
- * and per-sticker action buttons (a test clicks `.st-emote-delete-pack`),
- * `st-emote-badge-empty` (the state with nothing to say, so it needs no colour),
- * and the three container classes that carry an id and no appearance of their own.
+ * Classes the panel applies to be *found* rather than to be styled: the
+ * per-action query hooks a test clicks (`.st-emote-export`), `st-emote-badge-empty`
+ * (the one state with nothing extra to say, so it needs no colour of its own), and
+ * the container class that carries an id and no appearance.
  *
  * Every other `st-emote-*` class the panel applies must have a rule, which is what
- * the test above enforces.
+ * the test above enforces — over two panel states, so the conditional ones count.
  */
 const QUERY_HOOKS = [
     'st-emote-add-url',
     'st-emote-badge-empty',
-    'st-emote-delete-pack',
+    'st-emote-delete-selected',
     'st-emote-export',
     'st-emote-packs',
-    'st-emote-placement',
     'st-emote-replace',
-    'st-emote-sizes',
     'st-emote-sticker-delete',
     'st-emote-upload',
 ];
@@ -1175,14 +1211,14 @@ const EXPECTED_CONTROL_SURFACE = [
     '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Max width"',
     '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Min height"',
     '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Min width"',
-    '尺寸集 "Block size (after the block / end of message)" :: select.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
+    '尺寸集 "Block size (after the block / end of message)" :: select.st-emote-size.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
     '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Gap between stickers (left/right)"',
     '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Gap between stickers (top/bottom)"',
     '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Max height"',
     '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Max width"',
     '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Min height"',
     '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Min width"',
-    '尺寸集 "Inline size (in place)" :: select.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
+    '尺寸集 "Inline size (in place)" :: select.st-emote-size.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
 ];
 
 /**
@@ -1310,9 +1346,29 @@ function controlSurface(document) {
 }
 
 /**
+ * Every class name `style.css` mentions anywhere in a selector, from a rule that
+ * is a bare `.name`, one of several in a list, or a descendant of something else.
+ *
+ * @returns {Set<string>}
+ */
+function styledClasses() {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    const names = new Set();
+    for (const match of css.matchAll(/\.([A-Za-z][\w-]*)/g)) {
+        names.add(match[1]);
+    }
+    return names;
+}
+
+/**
  * `style.css` as a selector → declarations map, so a test can ask "is there a rule
  * for this" without a browser. Comments are dropped, since a class named inside
  * one is a note rather than a rule.
+ *
+ * Each selector in a comma-separated list gets its own entry, because
+ * `.st-emote-placement, .st-emote-sizes` styles two classes and a lookup for
+ * either of them has to find it.
  *
  * @returns {Record<string, string>}
  */
@@ -1325,7 +1381,10 @@ function readStyleSheet() {
         if (open === -1) {
             continue;
         }
-        rules[block.slice(0, open).trim()] = block.slice(open + 1);
+        const declarations = block.slice(open + 1);
+        for (const selector of block.slice(0, open).split(',')) {
+            rules[selector.trim()] = declarations;
+        }
     }
     return rules;
 }
