@@ -171,6 +171,10 @@ test('the catalog carries no value nobody can reach', () => {
     // a key added to a catalog has to be added here too, or this fails.
     const used = new Set([
         'panel.intro', 'panel.introTokenCaption', 'panel.tokenExample', 'panel.iconHint',
+        // The four block titles and the status line, ticket 13.
+        'block.library', 'block.rendering', 'block.appearance', 'block.tools',
+        'panel.packCount', 'panel.statusLabel', 'panel.statusOff',
+        'panel.startStep1', 'panel.startStep2', 'panel.startStep3', 'panel.startStep4',
         'panel.renderUser', 'panel.enabled', 'panel.enabledHint', 'form.label',
         'form.bracket', 'form.tag', 'form.bothOff',
         'panel.tagName', 'panel.sizeHint', 'panel.newPackName',

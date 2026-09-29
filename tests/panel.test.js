@@ -586,13 +586,14 @@ test('the panel speaks the client\'s language, and the whole of it', async () =>
     // The static part of the panel.
     for (const probe of [
         'Create pack', 'Search labels and descriptions', 'Import pack (.zip)',
-        'Copy regex JSON', 'Render stickers in user messages', 'Render stickers at all',
+        'Copy regex JSON', 'Render stickers in user messages', 'Master switch: render stickers',
         'Token forms', 'Gap between stickers (left/right)',
         'In place', 'Inline size (in place)', 'Min width',
+        'Re-render the current chat',
     ]) {
         assert.ok(english.includes(probe), `the English panel is missing "${probe}"`);
     }
-    for (const probe of ['新建表情包', '搜索标签与描述', '原地', '最小宽度', '标记形态', '表情之间的空隙（左右）']) {
+    for (const probe of ['新建表情包', '搜索标签与描述', '原地', '最小宽度', '标记形态', '表情之间的空隙（左右）', '重新渲染当前聊天']) {
         assert.ok(chinese.includes(probe), `the Chinese panel is missing "${probe}"`);
     }
 
@@ -715,8 +716,16 @@ test('the 总开关 turns rendering off in the live chat, and back on again', as
         const checkbox = document.getElementById('st_emote_enabled');
         assert.equal(checkbox.checked, true);
         // The consequence a user is most likely to be surprised by is stated on
-        // the switch rather than discovered from a preset that stopped working.
-        assert.match(document.getElementById('st_emote_enabled_hint').textContent, /expands to nothing/);
+        // the switch rather than discovered from a preset that stopped working —
+        // and while the switch is *on*, four lines about it are four lines
+        // between the user and the control they opened the panel for. So the
+        // sentence is on the row as its tooltip, always, and on screen only once
+        // the consequence is real.
+        const row = document.getElementById('st_emote_master');
+        const hint = document.getElementById('st_emote_enabled_hint');
+        assert.match(row.getAttribute('title'), /expands to nothing/);
+        assert.equal(hint.textContent, '', 'the consequence is on screen before it can happen');
+        assert.equal(row.classList.contains('st-emote-master-off'), false);
 
         // Rendered, so there is something to turn off. `processAllMessages`
         // rather than an event: the path is installed once per process and each
@@ -738,12 +747,17 @@ test('the 总开关 turns rendering off in the live chat, and back on again', as
         assert.equal(extensionSettings[STORAGE_KEY].enabled, false);
         assert.equal(document.querySelectorAll('img.custom-st-emote').length, 0);
         assert.equal(document.querySelector('.mes_text').textContent, 'a [[sticker:daily:happy]] b');
+        // And now the sentence is on screen, with the row drawn as off.
+        assert.match(hint.textContent, /expands to nothing/);
+        assert.equal(row.classList.contains('st-emote-master-off'), true);
 
         // And on again, with the images back.
         checkbox.checked = true;
         checkbox.dispatchEvent(new globalThis.window.Event('change'));
         assert.equal(extensionSettings[STORAGE_KEY].enabled, true);
         assert.equal(document.querySelectorAll('img.custom-st-emote').length, 1);
+        assert.equal(hint.textContent, '', 'the sentence stayed after the switch came back on');
+        assert.equal(row.classList.contains('st-emote-master-off'), false);
     });
 });
 
@@ -855,6 +869,35 @@ test('text with no token in it says so rather than reporting a miss', async () =
         document.getElementById('st_emote_preview_run').click();
         await settle();
         assert.equal(note.textContent, '');
+    });
+});
+
+test('the re-render button is not beside the preview\'s render button', async () => {
+    // The two are different actions on different things: `Render` reads the box
+    // above it, `Re-render` repaints the whole chat — which is not on this panel
+    // at all. In one row they read as a single action with two labels, and the
+    // one that rewrites the user's chat is the one you least want pressed by
+    // mistake. The caption is a sentence rather than a glyph's tooltip because a
+    // lone icon in a lone row has nothing to be read against.
+    await withPanelMounted({}, ({ document }) => {
+        const run = document.getElementById('st_emote_preview_run');
+        const rerender = document.getElementById('st_emote_rerender');
+
+        assert.equal(run.closest('.st-emote-debug-actions') !== null, true);
+        assert.equal(rerender.closest('.st-emote-debug-actions'), null, 'the two share a button row');
+        assert.equal(run.parentElement.parentElement, rerender.parentElement.parentElement);
+
+        // Below the preview output, and below the note that reports what the
+        // preview did — the repaint is a separate step after looking.
+        const debug = document.querySelector('.st-emote-debug');
+        const order = [...debug.querySelectorAll('[id]')].map((element) => element.id);
+        assert.ok(order.indexOf('st_emote_rerender') > order.indexOf('st_emote_preview_out'));
+
+        // And it says what it does, on screen, not only on hover.
+        assert.equal(
+            document.getElementById('st_emote_rerender_label').textContent,
+            t('panel.rerender'),
+        );
     });
 });
 
@@ -1454,6 +1497,313 @@ test('every class the panel puts on an element is either styled or a declared qu
     assert.deepEqual(unknown, []);
 });
 
+// ---------------------------------------------------------------------------
+// The panel's information architecture (ticket 13).
+//
+// Ticket 10 made the panel fit a narrow column and ticket 11 gave its buttons
+// glyphs and its explanations drawers. Both left the same thing unaddressed: the
+// pack list — the reason a user opens this panel — sat below every setting, and
+// forty controls of equal weight gave the eye nowhere to land.
+//
+// **What is asserted here is shape, not looks.** jsdom has no layout engine, so
+// nothing below can say whether the result is *good*; what it can say is that the
+// library comes first, that the read-outs report the 生效集 the rest of the
+// extension uses, and that the one action which creates everything else is
+// reachable and says what it is. The control-surface snapshot above is the other
+// half: it is unchanged, so none of this moved, renamed or dropped a control.
+// ---------------------------------------------------------------------------
+
+test('the library is the first block, and the pack list is above every setting', async () => {
+    // The one claim the whole ticket rests on. The panel is a data page with
+    // settings attached, and this is what makes it one: asserted by document
+    // order rather than by class, because a test that only checked the classes
+    // would still pass if the blocks were reordered in the markup.
+    await withPanelMounted({}, ({ document }) => {
+        // Document order, read off one ordered list rather than off pairwise
+        // comparisons: a test that only checked the classes would still pass if
+        // the blocks were rearranged inside the markup.
+        const order = [...document.getElementById('st_emote_drawer')
+            .querySelectorAll('[id]')].map((element) => element.id);
+        const at = (id) => order.indexOf(id);
+
+        assert.ok(at('st_emote_search') < at('st_emote_packs'), 'the search box is not above the pack list');
+        assert.ok(at('st_emote_new_pack') < at('st_emote_packs'), 'the create row is not above the pack list');
+        assert.ok(at('st_emote_packs') < at('st_emote_enabled'), 'the 总开关 is above the pack list');
+        assert.ok(at('st_emote_packs') < at('st_emote_placement'), 'the 投放方式 is above the pack list');
+        assert.ok(at('st_emote_packs') < at('st_emote_preview'), 'the debug box is above the pack list');
+
+        // And the first block is the library's, not a setting's: a user who opens
+        // the panel lands on content, not on a switch.
+        const first = document.querySelector('.inline-drawer-content > .st-emote-block');
+        assert.equal(first.id, 'st_emote_block_library');
+    });
+});
+
+test('the search box and the create row are one toolbar above the list', async () => {
+    // Both act on the pack list and neither is a setting, so they belong in the
+    // same block and the create row must be *named*: a placeholder is gone the
+    // moment the field has content, which is exactly when the user is creating
+    // the pack the field is for.
+    await withPanelMounted({}, ({ document }) => {
+        const library = document.getElementById('st_emote_block_library');
+        for (const id of ['st_emote_search', 'st_emote_new_pack', 'st_emote_packs']) {
+            assert.equal(
+                document.getElementById(id).closest('.st-emote-block') === library,
+                true,
+                `#${id} is not in the library block`,
+            );
+        }
+
+        // The visible name, and a real label association rather than a
+        // placeholder standing in for one.
+        const label = document.getElementById('st_emote_new_pack_label');
+        assert.equal(label.getAttribute('for'), 'st_emote_new_pack');
+        assert.match(label.textContent, /New pack name/);
+        assert.equal(label.hidden, false, 'the create field has no visible name');
+    });
+});
+
+test('the pack list is a bounded scroll box, so the settings stay reachable', async () => {
+    // The failure this prevents is not visible in jsdom and is not visible in the
+    // DOM either: a library of twenty packs is one long column, and the 外观 and
+    // 接入与工具 blocks end up below the fold with nothing to say so. The only
+    // thing a test without a layout engine can check is that the rule exists —
+    // which is worth checking, because deleting it is invisible everywhere else.
+    const rules = readStyleSheet();
+    const packs = rules['.st-emote-packs'] ?? '';
+    assert.match(packs, /max-height:\s*\d/, 'the pack list has no height bound');
+    assert.match(packs, /overflow-y:\s*auto/, 'the pack list does not scroll');
+});
+
+test('the status line reports the 生效集, and follows the 总开关', async () => {
+    // The numbers come from the same 生效集 the macro listing and the debug
+    // preview read, so a status line that disagreed with the listing would be
+    // worse than none. One pack is enabled in the fixture and it holds three
+    // labelled stickers, which is also the only way the singular wording gets
+    // exercised.
+    await withPanelMounted({}, ({ document }) => {
+        const counts = document.getElementById('st_emote_status_counts');
+        const label = document.getElementById('st_emote_status_text');
+        const strip = document.getElementById('st_emote_status');
+        assert.equal(counts.textContent, '1 pack · 3 stickers');
+        assert.match(label.textContent, /Active here/);
+        assert.equal(strip.classList.contains('st-emote-status-off'), false);
+
+        // Off: the counts are noise while nothing is being rendered, so the line
+        // says the one thing that is true instead.
+        const checkbox = document.getElementById('st_emote_enabled');
+        checkbox.checked = false;
+        checkbox.dispatchEvent(new globalThis.window.Event('change'));
+
+        assert.match(label.textContent, /Rendering is off/);
+        assert.equal(counts.textContent, '');
+        assert.equal(strip.classList.contains('st-emote-status-off'), true);
+    });
+});
+
+test('the drawer header carries nothing but the name', async () => {
+    // A read-out in the header (how many packs are on, or just "off") was there so
+    // the state would be legible while the panel is collapsed. The status line
+    // inside the panel says the same thing, and a row of numbers beside the name
+    // in a list of extension drawers is noise rather than information.
+    await withPanelMounted({}, ({ document }) => {
+        const header = document.querySelector('#st_emote_drawer > .inline-drawer-toggle');
+        assert.equal(header.querySelector('b').textContent, 'st-emote');
+        // The title and the client's own chevron, and nothing in between that
+        // says anything. Asserted as a class list rather than as a count, so a
+        // second read-out cannot be slipped in beside the name.
+        assert.deepEqual(
+            [...header.children].map((child) => [child.tagName.toLowerCase(), child.className]),
+            [
+                ['b', ''],
+                ['div', 'inline-drawer-icon fa-solid fa-circle-chevron-down down'],
+            ],
+        );
+        assert.equal(header.textContent, 'st-emote');
+    });
+});
+
+test('the status line follows a 作用域 toggle, which does not rebuild the list', async () => {
+    // The staleness this catches is the kind nothing else notices: the three
+    // scope boxes keep their own state rather than triggering a repaint, so a
+    // read-out that only followed a repaint would go stale on exactly the action
+    // a user takes to change what is enabled.
+    await withPanelMounted({}, ({ document }) => {
+        const counts = document.getElementById('st_emote_status_counts');
+        assert.equal(counts.textContent, '1 pack · 3 stickers');
+
+        const box = packByName(document, 'zeta').querySelector('.st-emote-scopes input');
+        assert.equal(box.checked, false);
+        box.checked = true;
+        box.dispatchEvent(new globalThis.window.Event('change'));
+        assert.equal(counts.textContent, '2 packs · 4 stickers');
+
+        box.checked = false;
+        box.dispatchEvent(new globalThis.window.Event('change'));
+        assert.equal(counts.textContent, '1 pack · 3 stickers');
+    });
+});
+
+test('a 冲突 in the 生效集 is on screen, and only when there is one', async () => {
+    // The most common shape of "I turned it on, I uploaded it, and nothing
+    // rendered": two enabled packs that both define `happy`, so the bare label is
+    // ambiguous and counts as a 未命中. The header sentence is the catalog's own,
+    // which is why the panel never has to word it.
+    const twoPacks = {
+        packs: [
+            { name: 'a', stickers: [{ id: 'a1', label: 'happy', description: '', image: '' }] },
+            { name: 'b', stickers: [{ id: 'b1', label: 'Happy', description: '', image: '' }] },
+        ],
+        enabledPackNames: ['a', 'b'],
+    };
+    await withPanelMounted({ settings: twoPacks }, ({ document }) => {
+        const warning = document.getElementById('st_emote_conflicts');
+        assert.equal(warning.hidden, false);
+        // The singular wording, because there is exactly one — which is the only
+        // way that half of the catalog gets looked at.
+        assert.match(warning.textContent, /Label conflict in the effective set \(1\)/);
+    });
+    // One pack on: nothing collides, so the line is gone rather than blank.
+    await withPanelMounted({ settings: { packs: twoPacks.packs, enabledPackNames: ['a'] } }, ({ document }) => {
+        assert.equal(document.getElementById('st_emote_conflicts').hidden, true);
+    });
+});
+
+test('a block title is bold and set at the panel\'s own size', async () => {
+    // A block heading is set at full strength or not at all. The first attempt
+    // here was deliberately quiet — `0.78em`, upper-case, `opacity: 0.6`, on the
+    // reasoning that a block heading should stay under the client's own
+    // collapsible headers. Beside another extension's section headings it read as
+    // a caption on nothing: smaller than a field label and much quieter than the
+    // thing it introduced.
+    //
+    // jsdom has no layout engine and no cascade, so the only half of this that is
+    // checkable here is that the rule *says* what it should. The size and the
+    // weight are one declaration and cannot disagree with each other in a
+    // screenshot without this catching it first.
+    const rules = readStyleSheet();
+    const title = rules['.st-emote-block-title'] ?? '';
+    assert.match(title, /font-weight:\s*(700|bold)/, 'the block title is not bold');
+    assert.match(title, /font-size:\s*1em/, 'the block title is not at the panel\'s own size');
+    // The quiet version's three tells, each of which reads as a caption.
+    assert.doesNotMatch(title, /text-transform/, 'the block title is still upper-cased');
+    assert.doesNotMatch(title, /opacity:\s*0\.[0-6]/, 'the block title is still dimmed');
+});
+
+test('every block has a title, and every title says something in both languages', async () => {
+    // A block with no name is the thing this ticket set out to remove, and the
+    // orphan-key test in `tests/i18n.test.js` cannot catch it: a key that is read
+    // and then thrown away is still read. Both states, so a title that only
+    // exists while the library is empty is caught too.
+    const titles = ['block.library', 'block.rendering', 'block.appearance', 'block.tools'];
+    for (const [label, options] of [['English', {}], ['Chinese', { locale: 'zh-cn' }]]) {
+        for (const settings of [{ packs: [] }, {}]) {
+            // eslint-disable-next-line no-await-in-loop
+            await withPanelMounted({ ...options, settings }, ({ document }) => {
+                const shown = [...document.querySelectorAll('.st-emote-block-title')]
+                    .map((element) => element.textContent);
+                assert.deepEqual(
+                    shown,
+                    titles.map((key) => t(key)),
+                    `the ${label} panel's block titles are wrong`,
+                );
+                for (const text of shown) {
+                    assert.notEqual(text.trim(), '');
+                    assert.doesNotMatch(text, /^block\./, 'a block title fell back to its key');
+                }
+            });
+        }
+    }
+});
+
+test('the library counts its own packs, in the panel\'s language', async () => {
+    for (const [label, probe, options] of [
+        ['English', /3 packs/, {}],
+        ['Chinese', /3 个表情包/, { locale: 'zh-cn' }],
+    ]) {
+        // eslint-disable-next-line no-await-in-loop
+        await withPanelMounted(options, ({ document }) => {
+            assert.match(
+                document.getElementById('st_emote_library_note').textContent,
+                probe,
+                `the ${label} library count is wrong`,
+            );
+        });
+    }
+});
+
+test('an empty library shows the four steps, and a library with packs does not', async () => {
+    // Shown exactly when there is nothing else to read. The last step is the one
+    // everybody misses — without `{{st-emote}}` in a preset the model is never
+    // told which labels exist, so it never writes a token and the feature looks
+    // broken — so it has to be in the card rather than in a tooltip.
+    await withPanelMounted({ settings: { packs: [] } }, ({ document }) => {
+        const card = document.getElementById('st_emote_start');
+        assert.equal(card.hidden, false);
+        const steps = [...card.querySelectorAll('li')].map((step) => step.textContent);
+        assert.equal(steps.length, 4);
+        assert.match(steps[3], /\{\{st-emote\}\}/);
+        assert.match(document.getElementById('st_emote_start_title').textContent, /No packs yet/);
+        // And the interface note rides along here rather than at the top of the
+        // panel, where it was four lines in front of the first control.
+        assert.match(document.getElementById('st_emote_start_hint').textContent, /buttons below are icons/);
+    });
+
+    await withPanelMounted({}, ({ document }) => {
+        assert.equal(document.getElementById('st_emote_start').hidden, true);
+    });
+});
+
+test('the first-run card is bilingual, in both states of the library', async () => {
+    // The panel-language test above reads a panel with packs in it, so it never
+    // sees these sentences rendered. The card is the whole first-run experience;
+    // a half-translated one is the first thing a new user meets.
+    for (const [label, pattern] of [
+        ['English', /[A-Za-z]/],
+        ['Chinese', /[一-鿿]/],
+    ]) {
+        // eslint-disable-next-line no-await-in-loop
+        await withPanelMounted({ locale: label === 'Chinese' ? 'zh-cn' : 'en', settings: { packs: [] } }, ({ document }) => {
+            const card = document.getElementById('st_emote_start');
+            const spoken = [
+                document.getElementById('st_emote_start_title').textContent,
+                document.getElementById('st_emote_start_hint').textContent,
+                document.getElementById('st_emote_library_title').textContent,
+                document.getElementById('st_emote_status_text').textContent,
+                ...[...card.querySelectorAll('li')].map((step) => step.textContent),
+            ];
+            for (const sentence of spoken) {
+                assert.notEqual(sentence.trim(), '');
+                assert.match(sentence, pattern, `the first-run panel says nothing in ${label}: "${sentence}"`);
+            }
+        });
+    }
+});
+
+test('creating a pack puts it in front of the user', async () => {
+    // The list is sorted by name, so a new pack lands wherever its name sorts
+    // rather than at the end where it was just added. "I pressed the button and
+    // nothing happened" is the whole failure, and it is the reason the create row
+    // reads as the panel's first action rather than its most puzzling one.
+    await withPanelMounted({}, ({ document }) => {
+        const name = document.getElementById('st_emote_new_pack');
+        name.value = 'beagle';
+        document.getElementById('st_emote_create_pack').click();
+
+        assert.equal(name.value, '', 'the field kept the name');
+        const created = packByName(document, 'beagle');
+        assert.ok(created, 'the pack was not added to the list');
+        // Sorted, not appended — so it is genuinely in the middle of the list and
+        // genuinely out of sight without this.
+        assert.notEqual(
+            [...document.querySelectorAll('.st-emote-pack')].at(-1),
+            created,
+            'this pack happened to sort last, so the test proves nothing',
+        );
+        assert.equal(document.activeElement, created.querySelector('.st-emote-pack-name'));
+    });
+});
+
 /**
  * Every `st-emote-*` class in force anywhere under the drawer.
  *
@@ -1541,7 +1891,13 @@ const EXPECTED_ICON_BUTTON_KEYS = {
  * Classes the panel applies to be *found* rather than to be styled: the
  * per-action query hooks a test clicks (`.st-emote-export`), `st-emote-badge-empty`
  * (the one state with nothing extra to say, so it needs no colour of its own), and
- * the container class that carries an id and no appearance.
+ * the two containers that carry an id and no appearance of their own —
+ * `st-emote-sizes` (filled by `adapter/sizing-panel.js`) and the
+ * `st-emote-missing` block (also identified by its id, and its visible parts are
+ * styled individually).
+ *
+ * `st-emote-packs` used to be the third of that kind. It is a scroll box now
+ * (ticket 13), so it is styled and lives in `style.css` like everything else.
  *
  * Every other `st-emote-*` class the panel applies must have a rule, which is what
  * the test above enforces — over two panel states, so the conditional ones count.
@@ -1551,8 +1907,9 @@ const QUERY_HOOKS = [
     'st-emote-badge-empty',
     'st-emote-delete-selected',
     'st-emote-export',
-    'st-emote-packs',
+    'st-emote-missing',
     'st-emote-replace',
+    'st-emote-sizes',
     'st-emote-sticker-delete',
     'st-emote-upload',
 ];
@@ -1632,7 +1989,7 @@ const EXPECTED_CONTROL_SURFACE = [
     'settings :: div#st_emote_create_pack.menu_button "Create pack"',
     'settings :: div#st_emote_import_pack.menu_button "Import pack (.zip)"',
     'settings :: input[checkbox]#st_emote_bracket_form "Bracket form: [[sticker:pack:label]]"',
-    'settings :: input[checkbox]#st_emote_enabled "Render stickers at all"',
+    'settings :: input[checkbox]#st_emote_enabled "Master switch: render stickers"',
     'settings :: input[checkbox]#st_emote_render_user "Render stickers in user messages"',
     'settings :: input[checkbox]#st_emote_tag_form "HTML tag form: the tag name below, wrapping pack:label"',
     'settings :: input[file][.zip,application/zip single] (no caption)',

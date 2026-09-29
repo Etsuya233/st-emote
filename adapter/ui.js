@@ -30,6 +30,7 @@ import {
     validateStickerTag,
 } from '../core/constraints.js';
 import { addImportedPack, removePack, removeStickers, replaceStickerImage } from '../core/catalogue.js';
+import { findConflicts } from '../core/conflict.js';
 import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
 import {
     PACK_STATES,
@@ -57,6 +58,7 @@ import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
 import { useClientLocale } from './locale.js';
 import { logError } from './log.js';
+import { effectiveSetForMessage } from './render-common.js';
 import { setEnabled } from './render-path.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
 import { clearContextRegexJson } from './regex.js';
@@ -191,10 +193,16 @@ function stickerImageMissing(sticker) {
 }
 
 /**
- * The panel's fixed skeleton: the intro, the 总开关 and the two 标记 form
- * switches, the 投放方式 and 尺寸 containers the sizing section fills, the pack
- * creator, the macro and regex hints, the import row, and the place the pack
- * list goes.
+ * The panel's fixed skeleton: the intro and the status line, then the four
+ * blocks the panel is sorted into — 表情包 (the content), 渲染, 外观 and
+ * 接入与工具 — the pack creator, the macro and regex hints, the import row, and
+ * the place the pack list goes.
+ *
+ * **The order is the point, and it is content first.** The library is what a
+ * user opens this panel to change; everything else is configuration. So the
+ * packs, their search box and their create row come before any setting, and the
+ * pack list scrolls inside its own box rather than pushing the settings off the
+ * bottom of the panel.
  *
  * Only markup and ids here — every visible word is filled in afterwards through
  * `textContent`, because a sentence carrying a user's pack name must not be able
@@ -206,63 +214,114 @@ function panelSkeleton() {
     return [
         '<div class="inline-drawer-toggle inline-drawer-header">',
         '<b>st-emote</b>',
+        // Nothing else in the header. A read-out here (how many packs are on, or
+        // simply "off") was there so the state would be legible while the panel
+        // is collapsed — which it mostly was, except that the status line inside
+        // the panel already says the same thing, and a row of numbers sitting
+        // next to the name in a list of extension drawers is noise rather than
+        // information. The state is one click away, and the 总开关's own row says
+        // it more directly.
         '<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>',
         '</div>',
         '<div class="inline-drawer-content">',
         '<div class="st-emote-hint" id="st_emote_intro"></div>',
-        '<div class="st-emote-hint" id="st_emote_icon_hint"></div>',
-        // Three groups rather than one column of equal-density controls: 处理
-        // (what gets rendered at all), 标记 (what the token is written with) and
-        // 外观 (where a rendered one lands and how big it is). The grouping is
-        // carried by a rhythm and a hairline between groups — no headings, because
-        // the sentences would need two catalogs to say something the spacing
-        // already says.
-        //
-        // `st-emote-group` and not `st-emote-block`: the latter is the class on a
-        // 块后 image, and two meanings for one word is the kind of thing that
-        // reads wrong six months later.
-        '<div class="st-emote-group">',
-        '<label class="st-emote-option">',
+
+        // The status line and the one warning that belongs beside it. Both are
+        // repainted by `paintStatus`; neither is a control.
+        '<div class="st-emote-status" id="st_emote_status">',
+        '<span class="st-emote-status-dot"></span>',
+        '<span class="st-emote-status-text" id="st_emote_status_text"></span>',
+        '<span class="st-emote-status-counts" id="st_emote_status_counts"></span>',
+        '</div>',
+        '<div class="st-emote-status st-emote-status-warn" id="st_emote_conflicts" hidden></div>',
+
+        // ── the library: the panel's content, and the reason it is open ──────
+        '<div class="st-emote-block" id="st_emote_block_library">',
+        '<div class="st-emote-block-head">',
+        '<div class="st-emote-block-title" id="st_emote_library_title"></div>',
+        '<div class="st-emote-block-note" id="st_emote_library_note"></div>',
+        '</div>',
+        // Shown only while the library is empty, and then it is the first thing
+        // under the title — a user with no packs has nothing else to read, and
+        // the four steps are the whole feature.
+        '<div class="st-emote-start" id="st_emote_start" hidden>',
+        '<div class="st-emote-start-title" id="st_emote_start_title"></div>',
+        '<ol class="st-emote-start-steps" id="st_emote_start_steps"></ol>',
+        '<div class="st-emote-hint" id="st_emote_start_hint"></div>',
+        '</div>',
+        // The search box and the create row are the library's own toolbar: the
+        // search filters the list right below it and the create row puts
+        // something *into* that same list, so they sit together above it.
+        // Neither is behind a header, for the same reason — both are reachable
+        // without deciding to open anything first.
+        '<div class="st-emote-search">',
+        '<input type="text" class="text_pole" id="st_emote_search">',
+        '</div>',
+        '<div class="st-emote-create">',
+        // A `<label for>` rather than a wrapping one: the row holds the create
+        // button, and a control inside a label is a browser's problem to
+        // resolve. The sentence is the field's own name, which is also its
+        // placeholder — a field this short does not need two ways of saying it.
+        '<label class="st-emote-create-label" id="st_emote_new_pack_label" for="st_emote_new_pack"></label>',
+        '<input type="text" class="text_pole" id="st_emote_new_pack">',
+        '<div class="menu_button st-emote-button" id="st_emote_create_pack"></div>',
+        '</div>',
+        '<div id="st_emote_missing" class="st-emote-missing"></div>',
+        '<div id="st_emote_packs" class="st-emote-packs"></div>',
+        '</div>',
+
+        // ── 渲染: what gets rendered at all, and how a 标记 is written ───────
+        '<div class="st-emote-block" id="st_emote_block_rendering">',
+        '<div class="st-emote-block-title" id="st_emote_render_title"></div>',
+        // The 总开关 gets a row of its own rather than sharing the checkbox
+        // every other setting uses: it is the one control that decides whether
+        // the extension does anything, and the consequence of turning it off is
+        // a paragraph — which is why that paragraph is on screen only while it
+        // is off, and always on the row as its tooltip.
+        '<label class="st-emote-master" id="st_emote_master">',
         '<input type="checkbox" id="st_emote_enabled"> <span id="st_emote_enabled_label"></span>',
         '</label>',
         '<div class="st-emote-hint" id="st_emote_enabled_hint"></div>',
         '<label class="st-emote-option">',
         '<input type="checkbox" id="st_emote_render_user"> <span id="st_emote_render_user_label"></span>',
         '</label>',
-        '<div class="st-emote-form-label" id="st_emote_form_label"></div>',
+        '<div class="st-emote-subtitle" id="st_emote_form_label"></div>',
         '<label class="st-emote-option">',
         '<input type="checkbox" id="st_emote_bracket_form"> <span id="st_emote_bracket_form_label"></span>',
         '</label>',
         '<label class="st-emote-option">',
         '<input type="checkbox" id="st_emote_tag_form"> <span id="st_emote_tag_form_label"></span>',
         '</label>',
-        '<div class="st-emote-hint" id="st_emote_form_hint"></div>',
-        '</div>',
-        '<div class="st-emote-group">',
-        '<label class="st-emote-option">',
+        // Indented under the two switches above, because it configures the
+        // second of them rather than standing on its own.
+        '<label class="st-emote-option st-emote-suboption">',
         '<span id="st_emote_tag_name_label"></span>',
         '<input type="text" class="text_pole" id="st_emote_tag_name">',
         '</label>',
+        '<div class="st-emote-hint" id="st_emote_form_hint"></div>',
         '</div>',
-        '<div class="st-emote-group">',
+
+        // ── 外观: where a rendered one lands and how big it is ───────────────
+        '<div class="st-emote-block" id="st_emote_block_appearance">',
+        '<div class="st-emote-block-title" id="st_emote_look_title"></div>',
+        // The em/px/% sentence lives here rather than beside the 总开关, because
+        // it is about these two 尺寸集 and about nothing else. It is also the
+        // block title's tooltip, so the long form is one hover away.
         '<div class="st-emote-hint" id="st_emote_size_hint"></div>',
-        '<div class="st-emote-placement">',
         '<label class="st-emote-field">',
         '<span id="st_emote_placement_label"></span>',
         '<select class="text_pole" id="st_emote_placement"></select>',
         '</label>',
-        '</div>',
         // The two 尺寸集 fill this one container, each as a collapsed section of
         // its own (see `mountSizingSection`). 投放方式 stays outside them: one
-        // select does not deserve a drawer, and the 外观 group as a whole is the
+        // select does not deserve a drawer, and the 外观 block as a whole is the
         // one section of the panel that never closes.
         '<div id="st_emote_sizes" class="st-emote-sizes"></div>',
         '</div>',
-        '<div class="st-emote-create">',
-        '<input type="text" class="text_pole" id="st_emote_new_pack">',
-        '<div class="menu_button st-emote-button" id="st_emote_create_pack"></div>',
-        '</div>',
-        '<div id="st_emote_missing" class="st-emote-missing"></div>',
+
+        // ── 接入与工具: everything read once, then never again ───────────────
+        '<div class="st-emote-block" id="st_emote_block_tools">',
+        '<div class="st-emote-block-title" id="st_emote_tools_title"></div>',
         // The three explanation blocks, each wrapped in a collapsed section once
         // the panel mounts: a paragraph plus a sample is a page of panel nobody
         // reads, and it is the same text once they open it. The wrappers carry
@@ -283,14 +342,7 @@ function panelSkeleton() {
         '<div class="menu_button st-emote-button" id="st_emote_import_pack"></div>',
         '</div>',
         '</div>',
-        // The search box stays outside every drawer on purpose: it filters the
-        // pack list right below it, so a user reaching for it is looking for a
-        // sticker rather than for an explanation, and hiding it behind a header
-        // would make the most-used control on the panel the hardest to find.
-        '<div class="st-emote-search">',
-        '<input type="text" class="text_pole" id="st_emote_search">',
         '</div>',
-        '<div id="st_emote_packs" class="st-emote-packs"></div>',
         '</div>',
     ].join('');
 }
@@ -300,16 +352,121 @@ function panelSkeleton() {
  * side by side. Built as its own element tree rather than one string so the
  * sample keeps its `<code>` styling while the prose stays plain text.
  *
+ * **The caption sits on its own line** so the sample below it is one unbroken
+ * run of characters. A marker the user has to read is a marker they cannot
+ * mistype, and a caption in front of it costs the panel one line.
+ *
  * @param {any} context
  * @param {HTMLElement} target
  */
 function fillIntro(context, target) {
     target.textContent = t('panel.intro');
     const caption = document.createElement('div');
+    caption.className = 'st-emote-intro-token';
     caption.textContent = `${t('panel.introTokenCaption')} `;
     const example = document.createElement('code');
     example.textContent = t('panel.tokenExample');
     target.append(caption, example);
+}
+
+/**
+ * The first-run card: the four steps, in order, for a user with no packs at all.
+ *
+ * Built here rather than in the skeleton because the steps are a list and the
+ * skeleton holds markup only. The last step is the one everybody misses — with
+ * no `{{st-emote}}` in a preset the model is never told which labels exist, so
+ * it never writes a token and the whole feature looks broken.
+ *
+ * @param {HTMLElement} target - The `<ol>` the steps go into.
+ */
+function fillStartSteps(target) {
+    target.textContent = '';
+    for (const key of [
+        'panel.startStep1',
+        'panel.startStep2',
+        'panel.startStep3',
+        'panel.startStep4',
+    ]) {
+        const step = document.createElement('li');
+        step.textContent = t(key);
+        target.append(step);
+    }
+}
+
+/**
+ * Repaint the two read-outs that answer "what is in play right now": the status
+ * line under the intro, and the shorter one in the drawer's own header.
+ *
+ * **The numbers come from the same 生效集 the macro listing and the debug
+ * preview read** (`effectiveSetForMessage(context, -1)` — the message id a
+ * streaming preview carries, which falls back to the selected character). One
+ * source, so the status line cannot disagree with the listing the model is
+ * actually given.
+ *
+ * Two counts are two sentences rather than one sentence with two values in it:
+ * `t` picks a singular wording from a single `count`, so "1 packs" would be
+ * whatever the second number happened to be.
+ *
+ * Called from the three places the 生效集 can change without a rebuild of the
+ * settings half of the panel — the pack list repaint, the 总开关, and each of
+ * the three 作用域 toggles.
+ *
+ * @param {any} context
+ */
+function paintStatus(context) {
+    const settings = ensureSettings(context);
+    const strip = document.getElementById('st_emote_status');
+    const text = document.getElementById('st_emote_status_text');
+    const counts = document.getElementById('st_emote_status_counts');
+    if (!strip || !text || !counts) {
+        return;
+    }
+
+    const effective = effectiveSetForMessage(context, -1);
+    const packs = effective.packs.length;
+    const stickers = effective.packs.reduce((total, pack) => total + pack.stickers.length, 0);
+    const readOut = `${t('panel.packCount', { count: packs })} · ${t('pack.stickerCount', { count: stickers })}`;
+
+    // A count of what *would* be available is noise while nothing is being
+    // rendered, so the whole line changes rather than gaining a footnote.
+    strip.classList.toggle('st-emote-status-off', !settings.enabled);
+    text.textContent = settings.enabled ? t('panel.statusLabel') : t('panel.statusOff');
+    counts.textContent = settings.enabled ? readOut : '';
+
+    // 冲突 is the other question this line exists to answer, and it is the most
+    // common reason for "I enabled it, I uploaded it, and nothing rendered".
+    const conflicts = findConflicts(effective);
+    const warning = document.getElementById('st_emote_conflicts');
+    if (warning) {
+        warning.hidden = conflicts.length === 0;
+        warning.textContent = conflicts.length === 0
+            ? ''
+            : t('conflict.header', { count: conflicts.length });
+    }
+}
+
+/**
+ * Repaint the 总开关's row: its own class when it is off, and the paragraph
+ * about what turning it off does.
+ *
+ * **The paragraph is on screen only while the switch is off.** It is four lines
+ * describing a consequence that has not happened yet, and four lines of it sit
+ * between the user and the control they opened the panel for. The sentence is
+ * always on the row as its tooltip, so the moment it becomes true is the moment
+ * it is also readable without a hover.
+ *
+ * @param {any} context
+ */
+function paintMasterSwitch(context) {
+    const settings = ensureSettings(context);
+    const row = document.getElementById('st_emote_master');
+    const hint = document.getElementById('st_emote_enabled_hint');
+    if (!row || !hint) {
+        return;
+    }
+    row.classList.toggle('st-emote-master-off', !settings.enabled);
+    row.title = t('panel.enabledHint');
+    hint.textContent = settings.enabled ? '' : t('panel.enabledHint');
 }
 
 /**
@@ -338,16 +495,38 @@ export function mountSettingsPanel(context) {
     const refresh = () => renderPackList(context, packContainer, missingContainer, refresh);
 
     fillIntro(context, root.querySelector('#st_emote_intro'));
-    root.querySelector('#st_emote_icon_hint').textContent = t('panel.iconHint');
+    fillStartSteps(root.querySelector('#st_emote_start_steps'));
+    root.querySelector('#st_emote_start_title').textContent = t('panel.noPacks');
+    // The icons-are-icons sentence is the one piece of the old intro that is
+    // about the *interface* rather than about the feature, so it belongs with
+    // the first-run card — a user who already has packs does not need it, and a
+    // user with none has nothing else to read.
+    root.querySelector('#st_emote_start_hint').textContent = t('panel.iconHint');
+
+    // The four block titles. Small, wide-tracked and upper-case: quieter than a
+    // heading the client draws for a collapsible section, and never confusable
+    // with one.
+    root.querySelector('#st_emote_library_title').textContent = t('block.library');
+    root.querySelector('#st_emote_render_title').textContent = t('block.rendering');
+    root.querySelector('#st_emote_look_title').textContent = t('block.appearance');
+    root.querySelector('#st_emote_tools_title').textContent = t('block.tools');
+    // The library's own count, and the long form of the 尺寸 sentence as the
+    // 外观 title's hover: a tooltip is where a paragraph belongs when the
+    // paragraph is about everything inside the block.
+    root.querySelector('#st_emote_look_title').title = t('panel.sizeHint');
+
     root.querySelector('#st_emote_size_hint').textContent = t('panel.sizeHint');
     root.querySelector('#st_emote_placement_label').textContent = t('placement.label');
     root.querySelector('#st_emote_render_user_label').textContent = t('panel.renderUser');
     root.querySelector('#st_emote_enabled_label').textContent = t('panel.enabled');
-    root.querySelector('#st_emote_enabled_hint').textContent = t('panel.enabledHint');
     root.querySelector('#st_emote_form_label').textContent = t('form.label');
     root.querySelector('#st_emote_bracket_form_label').textContent = t('form.bracket');
     root.querySelector('#st_emote_tag_form_label').textContent = t('form.tag');
     root.querySelector('#st_emote_tag_name_label').textContent = `${t('panel.tagName')}:`;
+    // The create row's name, as a visible label rather than as a placeholder: a
+    // placeholder disappears the moment the field has content, and the field
+    // this one is in has content the moment it is being used.
+    root.querySelector('#st_emote_new_pack_label').textContent = t('panel.newPackName');
     root.querySelector('#st_emote_new_pack').placeholder = t('panel.newPackName');
     // The three actions that live in the fixed skeleton get their glyph the
     // same way, rather than by being built here: they keep the ids their
@@ -366,16 +545,16 @@ export function mountSettingsPanel(context) {
     // place is what keeps the four sections (these three plus the debug area)
     // from drifting into four slightly different widgets.
     //
-    // **The order of the whole panel is by how often a thing is reached for**,
-    // and these four calls are where that order is set. 尺寸集 (built in
-    // `mountSizingSection`, which fills `#st_emote_sizes` further up) is the most
-    // reached for, because changing how a sticker looks is a more common fix than
-    // diagnosing why one did not draw. The debug area comes next: it is a tool a
-    // user returns to whenever something looks wrong. The three below are
-    // setup-time material — read once when the panel is first opened, then never
-    // again — so they go last, in that order: the macro is what a new user needs
-    // first, the regex is a refinement on it, and moving a pack between devices is
-    // the rarest of the three.
+    // **They are in the order a user needs them in, inside one block.** The two
+    // 尺寸集 are built by `mountSizingSection` further up and are the most
+    // reached for, because changing how a sticker looks is a more common fix
+    // than diagnosing why one did not draw. The debug area comes next: it is a
+    // tool a user returns to whenever something looks wrong. The three below
+    // are setup-time material — read once when the panel is first opened, then
+    // never again — so they go last, in that order: the macro is what a new user
+    // needs first, the regex is a refinement on it, and moving a pack between
+    // devices is the rarest of the three. A block title over all four says they
+    // are one kind of thing, which the order alone does not.
     //
     // The debug area is inserted *before* the collapses, because `collapseBlock`
     // replaces the block it wraps — afterwards the id it was found by is gone.
@@ -457,6 +636,8 @@ export function mountSettingsPanel(context) {
     enabledCheckbox.checked = settings.enabled;
     enabledCheckbox.addEventListener('change', () => {
         setEnabled(context, enabledCheckbox.checked);
+        paintMasterSwitch(context);
+        paintStatus(context);
         saveAndRefresh(context);
     });
 
@@ -475,6 +656,7 @@ export function mountSettingsPanel(context) {
         context.saveSettingsDebounced();
         nameInput.value = '';
         refresh();
+        revealPack(check.value);
     });
 
     searchInput.addEventListener('input', () => refresh());
@@ -489,7 +671,39 @@ export function mountSettingsPanel(context) {
     // The stored-file listing decides which packs read as "images missing", and
     // it is only knowable by asking the server, so the first paint waits for it.
     refreshStoredImages(context).then(refresh);
+    paintMasterSwitch(context);
     refresh();
+}
+
+/**
+ * Put a freshly created pack in front of the user.
+ *
+ * The list is sorted by name, so a new pack lands wherever its name sorts
+ * rather than at the end where it was just added — which is how "I pressed the
+ * button and nothing happened" happens. Scrolling it into view and focusing its
+ * name input is the whole fix, and it is the difference between the create row
+ * being the panel's first action and being the panel's most puzzling one.
+ *
+ * Matched on the rendered field rather than on the record, because that is the
+ * only handle the DOM has: the list is rebuilt from scratch on every change and
+ * nothing on the page remembers which element was which.
+ *
+ * `scrollIntoView` is guarded because jsdom has no layout to scroll. A missing
+ * one is a browser that cannot, and a call that throws would take the click
+ * handler down with it.
+ *
+ * @param {string} name - The pack's name, as the catalogue now spells it.
+ */
+function revealPack(name) {
+    const row = [...document.querySelectorAll('#st_emote_packs .st-emote-pack')]
+        .find((pack) => pack.querySelector('.st-emote-pack-name')?.value === name);
+    if (!row) {
+        return;
+    }
+    if (typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'nearest' });
+    }
+    row.querySelector('.st-emote-pack-name')?.focus();
 }
 
 /**
@@ -524,6 +738,14 @@ const PACK_STATE_LABEL_KEYS = {
 };
 
 /**
+ * Repaint the library: the pack list, the first-run card, the library's own
+ * count, and the status line above it.
+ *
+ * **The pack list is the one part of the panel that is rebuilt from scratch on
+ * every change**, so this is also where the read-outs that depend on the
+ * catalogue get repainted. The settings half is not rebuilt, which is what lets
+ * a section the user opened stay open while they edit inside it.
+ *
  * @param {any} context
  * @param {Element} packContainer
  * @param {Element} missingContainer
@@ -533,18 +755,34 @@ function renderPackList(context, packContainer, missingContainer, refresh) {
     const settings = ensureSettings(context);
     renderMissingPacks(context, settings, missingContainer, refresh);
 
+    const empty = settings.packs.length === 0;
+    // The card and the list are the same fact told two ways: with packs there is
+    // a list, without them there are four steps. The toolbar above stays either
+    // way, because naming a pack is how the list starts.
+    const start = document.getElementById('st_emote_start');
+    if (start) {
+        start.hidden = !empty;
+    }
+    const note = document.getElementById('st_emote_library_note');
+    if (note) {
+        note.textContent = t('panel.packCount', { count: settings.packs.length });
+    }
+    paintStatus(context);
+
     packContainer.textContent = '';
     const searchInput = document.getElementById('st_emote_search');
     const query = searchInput?.value ?? '';
     const entries = searchLibrary(sortPacks(settings.packs), query);
 
+    if (empty) {
+        // The first-run card says it, in four steps rather than in one line.
+        return;
+    }
     if (entries.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'st-emote-empty';
-        empty.textContent = settings.packs.length === 0
-            ? t('panel.noPacks')
-            : t('panel.noStickerMatches', { query });
-        packContainer.append(empty);
+        const nothing = document.createElement('div');
+        nothing.className = 'st-emote-empty';
+        nothing.textContent = t('panel.noStickerMatches', { query });
+        packContainer.append(nothing);
         return;
     }
 
@@ -863,6 +1101,12 @@ function selectedInPack(pack) {
  * pack with missing images enableable precisely so the user can turn it on and
  * put the pictures back.
  *
+ * **Each of the three repaints the status line.** None of them rebuilds the
+ * pack list — the checkbox keeps its own state, and a rebuild would throw away
+ * the tick boxes a user is halfway through — yet each of them changes the
+ * 生效集, which is what the status line is reporting. A read-out that only
+ * followed a list repaint would go stale on exactly the action that matters.
+ *
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
  * @returns {Element}
@@ -876,6 +1120,7 @@ function buildScopeToggles(context, pack) {
         isPackEnabled(ensureSettings(context), pack.name),
         (checked) => {
             setPackEnabled(ensureSettings(context), pack.name, checked);
+            paintStatus(context);
             saveAndRefresh(context);
         },
     ));
@@ -887,7 +1132,10 @@ function buildScopeToggles(context, pack) {
         hasCharacter && scopeHasPack(getCurrentCharacterScope(context), pack.name),
         (checked) => {
             const next = setPackInScope(getCurrentCharacterScope(context), pack.name, checked);
-            setCurrentCharacterScope(context, next).finally(() => rerenderChat(context));
+            setCurrentCharacterScope(context, next).finally(() => {
+                paintStatus(context);
+                rerenderChat(context);
+            });
         },
         !hasCharacter,
     ));
@@ -898,6 +1146,7 @@ function buildScopeToggles(context, pack) {
         (checked) => {
             const next = setPackInScope(getChatScope(context), pack.name, checked);
             setChatScope(context, next);
+            paintStatus(context);
             rerenderChat(context);
         },
     ));

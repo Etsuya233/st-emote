@@ -97,15 +97,28 @@ export function mountDebugSection(context, root) {
         '<textarea class="text_pole" id="st_emote_preview" rows="4"></textarea>',
         '<div class="st-emote-debug-actions">',
         '<div class="menu_button st-emote-button" id="st_emote_preview_run"></div>',
-        '<div class="menu_button st-emote-button" id="st_emote_rerender"></div>',
         '</div>',
         '<div class="st-emote-preview-note" id="st_emote_preview_note"></div>',
         '<div class="st-emote-preview" id="st_emote_preview_out"></div>',
+        // **The re-render button is below the preview, on its own, under a
+        // hairline** — because it is not part of the preview. `Render` reads the
+        // box above it; `Re-render` repaints the whole chat, which is not on this
+        // panel at all. Side by side in one button row the two read as one
+        // action with two labels, and the one that repaints the user's chat is
+        // the one that should never be the one you press by mistake.
+        '<div class="st-emote-debug-repaint">',
+        '<div class="menu_button st-emote-button" id="st_emote_rerender"></div>',
+        '<span class="st-emote-debug-repaint-label" id="st_emote_rerender_label"></span>',
+        '</div>',
     ].join('');
 
     section.querySelector('.st-emote-hint').textContent = t('panel.debugHint');
     const input = section.querySelector('#st_emote_preview');
     input.placeholder = t('panel.previewPlaceholder');
+    // The caption is the button's own `title` sentence, shown rather than
+    // hovered. A lone glyph in a lone row has nothing to be read against, and a
+    // chat-wide repaint is the one control here worth naming outright.
+    section.querySelector('#st_emote_rerender_label').textContent = t('panel.rerender');
     const runButton = iconize(
         section.querySelector('#st_emote_preview_run'),
         'previewRun',
