@@ -82,6 +82,10 @@ export const STICKER_BLOCK_SUFFIX = '-block';
 /**
  * @typedef {Object} RenderOptions
  * @property {string} [tagName] - Name of the configurable HTML-tag form.
+ * @property {boolean} [bracketForm] - Whether the `[[sticker:…]]` 标记 form is
+ *   accepted at all. Off means the form is not grammar: the text is left
+ *   exactly as written rather than being reported as a 未命中.
+ * @property {boolean} [tagForm] - Whether the HTML-tag 标记 form is accepted.
  * @property {import('./placement.js').Placement} [placement] - The global
  *   投放方式; a sticker may override it.
  * @property {import('./size.js').PartialSizeSets} [sizes] - The `inline` and

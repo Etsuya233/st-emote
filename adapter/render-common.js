@@ -45,6 +45,12 @@ export function renderOptions(context, options = {}) {
     const settings = ensureSettings(context);
     return {
         tagName: settings.stickerTag,
+        // Read here rather than at each call site: one 标记 form switch has to
+        // reach `core/token.js`, the DOM path's element pass and the prompt-only
+        // regex, and three places reading the same two booleans is three places
+        // to forget one.
+        bracketForm: settings.bracketForm,
+        tagForm: settings.tagForm,
         placement: settings.placement,
         sizes: settings.sizes,
         className: options.className,

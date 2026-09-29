@@ -19,6 +19,29 @@ import { DEFAULT_STICKER_TAG, validateStickerTag } from './constraints.js';
  */
 
 /**
+ * @typedef {Object} TokenFormOptions
+ * @property {string} [tagName] - Name of the configurable HTML-tag form.
+ * @property {boolean} [bracketForm] - Whether `[[sticker:…]]` is accepted.
+ *   Absent means on; this is the same "unset means the default" rule the
+ *   hand-typed size fields follow.
+ * @property {boolean} [tagForm] - Whether `<sticker>…</sticker>` is accepted.
+ */
+
+/**
+ * Whether one 标记 form is switched on. Absent and `true` both mean on, so a
+ * caller that has no settings — a unit test of the grammar, say — still gets
+ * both forms rather than neither.
+ *
+ * @param {TokenFormOptions} options
+ * @param {'bracketForm'|'tagForm'} field
+ * @returns {boolean}
+ */
+function isFormEnabled(options, field) {
+    const value = options[field];
+    return value === undefined ? true : value === true;
+}
+
+/**
  * Split the body of a token (everything between the delimiters) at its first
  * colon: the left side is the pack name, the right side is the label. With no
  * colon the whole body is a bare label.
@@ -50,26 +73,60 @@ function resolveTagName(tagName) {
  * The opening markers a token can start with. The adapter uses this as a cheap
  * "might this text contain a token?" pre-filter, so token grammar stays here.
  *
- * @param {unknown} tagName
+ * Only the forms that are switched on contribute a marker: a hint for a form
+ * that cannot match is not merely wasted work, it is a list that disagrees with
+ * what `findTokens` would find.
+ *
+ * @param {TokenFormOptions} [options]
  * @returns {string[]}
  */
-export function tokenPrefixes(tagName) {
-    const tag = resolveTagName(tagName);
-    return ['[[sticker:', `<${tag}>`, `&lt;${tag}&gt;`];
+export function tokenPrefixes(options = {}) {
+    const tag = resolveTagName(options.tagName);
+    const prefixes = [];
+    if (isFormEnabled(options, 'bracketForm')) {
+        prefixes.push('[[sticker:');
+    }
+    if (isFormEnabled(options, 'tagForm')) {
+        prefixes.push(`<${tag}>`, `&lt;${tag}&gt;`);
+    }
+    return prefixes;
+}
+
+/**
+ * The marker patterns for the forms that are switched on, in one place: both
+ * `findTokens` and `tokenPrefixes` decide from the same two switches, and the
+ * DOM path's element pass asks the same question about a different spelling of
+ * the same form.
+ *
+ * @param {TokenFormOptions} options
+ * @returns {{bracket: boolean, tag: boolean, tagName: string}}
+ */
+export function enabledForms(options = {}) {
+    return {
+        bracket: isFormEnabled(options, 'bracketForm'),
+        tag: isFormEnabled(options, 'tagForm'),
+        tagName: resolveTagName(options.tagName),
+    };
 }
 
 /**
  * @param {string} source
- * @param {string} tagName
+ * @param {TokenFormOptions} options
  * @returns {{index: number, length: number, raw: string, body: string}[]}
  */
-function findCandidates(source, tagName) {
+function findCandidates(source, options) {
+    const { bracket, tag: tagEnabled, tagName } = enabledForms(options);
     const tag = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const patterns = [
-        /\[\[sticker:([^[\]\n]*)\]\]/g,
-        new RegExp(`<${tag}>([^<\\n]*?)</${tag}>`, 'gi'),
-        new RegExp(`&lt;${tag}&gt;([^<\\n]*?)&lt;/${tag}&gt;`, 'gi'),
-    ];
+    const patterns = [];
+    if (bracket) {
+        patterns.push(/\[\[sticker:([^[\]\n]*)\]\]/g);
+    }
+    if (tagEnabled) {
+        patterns.push(
+            new RegExp(`<${tag}>([^<\\n]*?)</${tag}>`, 'gi'),
+            new RegExp(`&lt;${tag}&gt;([^<\\n]*?)&lt;/${tag}&gt;`, 'gi'),
+        );
+    }
 
     const candidates = [];
     for (const pattern of patterns) {
@@ -113,15 +170,16 @@ export function tokenText(token, options = {}) {
 
 /**
  * Find every token occurrence in a plain text string, in source order. Tokens
- * with an empty label are ignored and left untouched.
+ * with an empty label are ignored and left untouched, and a 标记 form that is
+ * switched off is not a token at all: the text stays exactly as written.
  *
  * @param {string} text
- * @param {{tagName?: string}} [options]
+ * @param {TokenFormOptions} [options]
  * @returns {Token[]}
  */
 export function findTokens(text, options = {}) {
     const source = String(text ?? '');
-    const candidates = findCandidates(source, resolveTagName(options.tagName));
+    const candidates = findCandidates(source, options);
     candidates.sort((a, b) => a.index - b.index || b.length - a.length);
 
     const tokens = [];

@@ -563,12 +563,13 @@ test('the panel speaks the client\'s language, and the whole of it', async () =>
     // The static part of the panel.
     for (const probe of [
         'Create pack', 'Search labels and descriptions', 'Import pack (.zip)',
-        'Copy regex JSON', 'Render stickers in user messages',
+        'Copy regex JSON', 'Render stickers in user messages', 'Render stickers at all',
+        'Token forms', 'Gap between stickers (left/right)',
         'In place', 'Inline size (in place)', 'Min width',
     ]) {
         assert.ok(english.includes(probe), `the English panel is missing "${probe}"`);
     }
-    for (const probe of ['新建表情包', '搜索标签与描述', '原地', '最小宽度']) {
+    for (const probe of ['新建表情包', '搜索标签与描述', '原地', '最小宽度', '标记形态', '表情之间的空隙（左右）']) {
         assert.ok(chinese.includes(probe), `the Chinese panel is missing "${probe}"`);
     }
 
@@ -603,6 +604,172 @@ test('a pack name and a search query reach the panel as text, never as markup', 
         search.dispatchEvent(new globalThis.window.Event('input'));
         assert.equal(document.querySelectorAll('.st-emote-empty b').length, 0);
         assert.match(document.querySelector('.st-emote-empty').textContent, /<b>nothing<\/b>/);
+    });
+});
+
+test('each 标记 form has its own switch, and turning one off repaints the chat', async () => {
+    // The switch has to reach three places — the scanner, the DOM element pass and
+    // the prompt-only regex — and this drives the one a user reaches for first
+    // and then watches the chat.
+    const source = '<p>a [[sticker:daily:happy]] b <sticker>daily:happy</sticker></p>';
+    await withPanelMounted({}, async ({ document, extensionSettings }) => {
+        const tagBox = document.getElementById('st_emote_tag_form');
+        const bracketBox = document.getElementById('st_emote_bracket_form');
+        const tagInput = document.getElementById('st_emote_tag_name');
+        assert.equal(tagBox.checked, true);
+        assert.equal(bracketBox.checked, true);
+        assert.equal(tagInput.disabled, false);
+
+        tagBox.checked = false;
+        tagBox.dispatchEvent(new globalThis.window.Event('change'));
+
+        assert.equal(extensionSettings[STORAGE_KEY].tagForm, false);
+        // The tag name still shows its state, greyed: the setting is stored, only
+        // the form it names is off.
+        assert.equal(tagInput.disabled, true);
+        // One form off is a normal state, so nothing warns.
+        assert.equal(document.getElementById('st_emote_form_hint').textContent, '');
+
+        bracketBox.checked = false;
+        bracketBox.dispatchEvent(new globalThis.window.Event('change'));
+        // Both off is legal, and the panel says so rather than leaving the user to
+        // wonder why nothing renders.
+        assert.match(document.getElementById('st_emote_form_hint').textContent, /Both token forms are off/);
+    });
+});
+
+test('the context-clearing regex JSON stops matching a 标记 form that is off', async () => {
+    // The failure this prevents: the user writes `<sticker>…</sticker>`, sees it
+    // do nothing, and finds it gone from the prompt as well. A form that is off
+    // must not be in the JSON at all.
+    // The pattern is regex source, so its own brackets arrive escaped; matching
+    // the marker names rather than the escaped source is what says which forms
+    // are in there.
+    const readPattern = () => JSON.parse(document.getElementById('st_emote_regex').textContent).findRegex;
+    await withPanelMounted({}, async ({ document }) => {
+        assert.match(readPattern(), /sticker:/);
+        assert.match(readPattern(), /<sticker>/);
+
+        const box = document.getElementById('st_emote_tag_form');
+        box.checked = false;
+        box.dispatchEvent(new globalThis.window.Event('change'));
+
+        const pattern = readPattern();
+        assert.doesNotMatch(pattern, /sticker>/);
+        assert.match(pattern, /sticker:/);
+    });
+});
+
+test('with both 标记 forms off the regex JSON cannot match anything at all', async () => {
+    // An empty alternation would match the empty string at every position, which
+    // in a user's prompt is the worst thing this file could hand out. Both forms
+    // off is a legal state, so the pattern has to be one that simply never fires.
+    await withPanelMounted({}, async ({ document }) => {
+        for (const id of ['st_emote_bracket_form', 'st_emote_tag_form']) {
+            const box = document.getElementById(id);
+            box.checked = false;
+            box.dispatchEvent(new globalThis.window.Event('change'));
+        }
+        const findRegex = JSON.parse(document.getElementById('st_emote_regex').textContent).findRegex;
+        assert.equal(findRegex, '/(?!)/gi');
+    });
+});
+
+test('renaming the HTML tag regenerates the regex JSON, forms included', async () => {
+    // Two settings decide the same string, so both have to re-run the same step.
+    await withPanelMounted({}, async ({ document }) => {
+        const input = document.getElementById('st_emote_tag_name');
+        input.value = 'emote';
+        input.dispatchEvent(new globalThis.window.Event('change'));
+        assert.match(JSON.parse(document.getElementById('st_emote_regex').textContent).findRegex, /<emote>/);
+    });
+});
+
+test('the 总开关 turns rendering off in the live chat, and back on again', async () => {
+    const source = '<p>a [[sticker:daily:happy]] b</p>';
+    await withPanelMounted({}, async (harness) => {
+        const { document, extensionSettings } = harness;
+        const checkbox = document.getElementById('st_emote_enabled');
+        assert.equal(checkbox.checked, true);
+        // The consequence a user is most likely to be surprised by is stated on
+        // the switch rather than discovered from a preset that stopped working.
+        assert.match(document.getElementById('st_emote_enabled_hint').textContent, /expands to nothing/);
+
+        // Rendered, so there is something to turn off. `processAllMessages`
+        // rather than an event: the path is installed once per process and each
+        // harness here has its own event bus, so an event would reach whichever
+        // earlier test installed the path, not this one.
+        document.getElementById('chat').innerHTML
+            = '<div class="mes" mesid="0" is_user="false" is_system="false" type="">'
+            + `<div class="mes_text">${source}</div></div>`;
+        const { installRendering } = await import('../adapter/render-path.js');
+        const { processAllMessages } = await import('../adapter/rendering.js');
+        installRendering(harness);
+        processAllMessages(harness);
+        assert.equal(document.querySelectorAll('img.custom-st-emote').length, 1);
+
+        checkbox.checked = false;
+        checkbox.dispatchEvent(new globalThis.window.Event('change'));
+
+        // Back to the marker, without a page reload.
+        assert.equal(extensionSettings[STORAGE_KEY].enabled, false);
+        assert.equal(document.querySelectorAll('img.custom-st-emote').length, 0);
+        assert.equal(document.querySelector('.mes_text').textContent, 'a [[sticker:daily:happy]] b');
+
+        // And on again, with the images back.
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new globalThis.window.Event('change'));
+        assert.equal(extensionSettings[STORAGE_KEY].enabled, true);
+        assert.equal(document.querySelectorAll('img.custom-st-emote').length, 1);
+    });
+});
+
+test('the 总开关 puts a 块后 image back where the model wrote it', async () => {
+    // Not the same as "the image goes away". A 块后 image is not where the model
+    // wrote it, so swapping it for its marker in place would put the text in the
+    // wrong paragraph; this is the claim that the way out is a restitch rather
+    // than an in-place replacement, and it is the reason the total switch could
+    // reuse `stopRendering` instead of growing its own undo.
+    const source = '<p>a [[sticker:daily:happy]] b [[sticker:daily:sad]] c</p>';
+    await withPanelMounted({ settings: { placement: 'after-block' } }, async (harness) => {
+        const { document } = harness;
+        // The chat entry is what the restitch reads from: a message on screen
+        // with no source is the case `stopRendering` can only partly undo.
+        harness.chat = [{ mes: source }];
+        document.getElementById('chat').innerHTML
+            = '<div class="mes" mesid="0" is_user="false" is_system="false" type="">'
+            + `<div class="mes_text">${source}</div></div>`;
+        const { installRendering, setEnabled } = await import('../adapter/render-path.js');
+        const { processAllMessages } = await import('../adapter/rendering.js');
+        installRendering(harness);
+        processAllMessages(harness);
+        assert.equal(document.querySelectorAll('img.custom-st-emote').length, 2);
+        // Both relocated: neither is inside the paragraph any more, which is what
+        // makes the restore non-trivial.
+        assert.equal(document.querySelector('.mes p img'), null);
+        assert.equal(document.querySelector('.mes_text').textContent, 'a  b  c');
+
+        setEnabled(harness, false);
+        assert.equal(document.querySelectorAll('img.custom-st-emote').length, 0);
+        assert.equal(document.querySelector('.mes_text').innerHTML, source);
+    });
+});
+
+test('the 总开关 does not suppress the debug preview', async () => {
+    // Deliberate, and the reason is in `core/preview.js`'s note: the preview
+    // pastes text rather than touching a chat, and "rendering is off" is exactly
+    // the state a user is trying to look at. A preview that returned bare text
+    // then would answer nothing.
+    await withPanelMounted({}, async ({ document }) => {
+        const checkbox = document.getElementById('st_emote_enabled');
+        checkbox.checked = false;
+        checkbox.dispatchEvent(new globalThis.window.Event('change'));
+
+        const box = document.getElementById('st_emote_preview');
+        box.value = 'She smiles. [[sticker:daily:happy]]';
+        document.getElementById('st_emote_preview_run').click();
+        await settle();
+        assert.match(document.getElementById('st_emote_preview_out').innerHTML, /custom-st-emote/);
     });
 });
 
