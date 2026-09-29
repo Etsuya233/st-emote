@@ -1102,6 +1102,29 @@ test('the catalog sentence behind an icon button is the one it used to paint', a
     }
 });
 
+test('the collapsible sections are ordered by how often a user reaches for them', async () => {
+    // The panel's whole order is a claim about frequency, and a claim like that
+    // decays silently: nothing breaks when a section moves, the panel just gets
+    // worse at something no test can see. So the order is stated here, once.
+    //
+    // Most reached for first. 尺寸集 is how a user changes how a sticker looks;
+    // the debug area is where they go when one did not draw; then the three
+    // setup-time explanations, rarest last, in the order a new user needs them:
+    // the macro, the regex that refines it, and moving a pack between devices.
+    await withPanelMounted({}, ({ document }) => {
+        const titles = [...document.querySelectorAll('#st_emote_drawer .st-emote-section-title')]
+            .map((element) => element.textContent);
+        assert.deepEqual(titles, [
+            'Inline size (in place)',
+            'Block size (after the block / end of message)',
+            'Try rendering / re-render',
+            'Listing macro',
+            'Context-clearing regex',
+            'Import and export a pack',
+        ]);
+    });
+});
+
 test('the sections that hold an explanation start collapsed, and use the client\'s drawer', async () => {
     // Two things at once, because they are one commitment. The list is what the
     // ticket decided collapses; the class names are how "we used the client's
@@ -1167,18 +1190,22 @@ test('a 尺寸集 holding a value that is not a size opens itself', async () => 
     // The one this ticket exists to get right. A refused size shows a hint
     // beside the input that was refused; a collapsed section would store the
     // value, log it, and hide the only place the user could learn about it. The
-    // section opens itself, says why, and its content is reachable.
+    // section opens itself, marks its header, and its content is reachable.
     await withPanelMounted({
         settings: { sizes: { inline: { maxHeight: 'not a size' } } },
     }, ({ document }) => {
         const section = document.querySelector('.st-emote-size-set');
         const toggle = section.querySelector('.inline-drawer-toggle');
         assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'the 尺寸集 stayed closed');
-        assert.equal(
-            section.querySelector('.st-emote-size-set-invalid') !== null,
-            true,
-            'the header does not say why it opened',
-        );
+        const mark = section.querySelector('.st-emote-size-set-invalid');
+        assert.ok(mark, 'the header does not mark itself as holding a bad value');
+        // The mark is a glyph and the sentence is its tooltip. It used to be the
+        // other way round, and a 60-character sentence with `white-space: nowrap`
+        // in a ~300px header stretched the row past the panel: the title collapsed
+        // into one word per line and the chevron went off the right edge. The hint
+        // below carries the detail, and it is on screen because of the expand.
+        assert.ok(mark.textContent.length <= 2, `the header mark is ${mark.textContent.length} characters`);
+        assert.equal(mark.title, 'needs a number with em, px or %');
         // The hint itself is where it always was: beside the input, inside the
         // content the user can now actually see.
         const hint = section.querySelector('.st-emote-hint-bad');

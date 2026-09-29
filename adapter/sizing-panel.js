@@ -147,6 +147,13 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
     // The client's drawer header wants the chevron as its last child, so
     // whatever the header says goes in front of it — and after the title, so
     // the title is still the first thing there.
+    //
+    // A mark here has to be short. This header is one line in a ~300px column
+    // next to a chevron, and a sentence in it does not wrap: it stretches the
+    // header past the panel, squeezes the title into a vertical stack and pushes
+    // the chevron out of sight. So the marks are glyphs, the tooltip carries the
+    // sentence, and the field's own hint — which is on screen, because the
+    // section opened itself — carries the detail.
     const marks = document.createElement('span');
     marks.className = 'st-emote-size-set-marks';
     toggle.insertBefore(marks, icon);
@@ -154,8 +161,7 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
         marks.append(sizeSetMark(t('size.customized')));
     }
     if (invalidField !== undefined) {
-        marks.append(sizeSetMark(t('size.openedBecauseInvalid'), 'st-emote-size-set-invalid'));
-        toggle.title = t('size.openedBecauseInvalid');
+        marks.append(sizeSetMark(t('size.invalidMark'), 'st-emote-size-set-invalid', t('size.invalidHint')));
     }
 
     const fields = document.createElement('div');
@@ -208,10 +214,13 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
  * @param {string} [className]
  * @returns {Element}
  */
-function sizeSetMark(text, className = '') {
+function sizeSetMark(text, className = '', title = '') {
     const element = document.createElement('span');
     element.className = `st-emote-size-set-mark ${className}`.trim();
     element.textContent = text;
+    if (title !== '') {
+        element.title = title;
+    }
     return element;
 }
 

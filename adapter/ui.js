@@ -365,12 +365,24 @@ export function mountSettingsPanel(context) {
     // the skeleton: the drawer markup is the client's, and building it in one
     // place is what keeps the four sections (these three plus the debug area)
     // from drifting into four slightly different widgets.
+    //
+    // **The order of the whole panel is by how often a thing is reached for**,
+    // and these four calls are where that order is set. 尺寸集 (built in
+    // `mountSizingSection`, which fills `#st_emote_sizes` further up) is the most
+    // reached for, because changing how a sticker looks is a more common fix than
+    // diagnosing why one did not draw. The debug area comes next: it is a tool a
+    // user returns to whenever something looks wrong. The three below are
+    // setup-time material — read once when the panel is first opened, then never
+    // again — so they go last, in that order: the macro is what a new user needs
+    // first, the regex is a refinement on it, and moving a pack between devices is
+    // the rarest of the three.
+    //
+    // The debug area is inserted *before* the collapses, because `collapseBlock`
+    // replaces the block it wraps — afterwards the id it was found by is gone.
+    root.querySelector('#st_emote_macro_block').before(mountDebugSection(context, root));
     collapseBlock(root.querySelector('#st_emote_macro_block'), t('panel.macroTitle'));
     collapseBlock(root.querySelector('#st_emote_regex_block'), t('panel.regexTitle'));
     collapseBlock(root.querySelector('#st_emote_transfer_block'), t('panel.transferTitle'));
-    // The debug area sits above the library: it is a tool for tuning the settings
-    // further up, and the pack list below it is the longest thing on the page.
-    root.querySelector('#st_emote_packs').before(mountDebugSection(context, root));
 
     const tagInput = root.querySelector('#st_emote_tag_name');
     const bracketBox = root.querySelector('#st_emote_bracket_form');

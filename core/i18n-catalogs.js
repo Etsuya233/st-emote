@@ -187,11 +187,13 @@ const EN = {
     'size.marginX': 'Gap between stickers (left/right)',
     'size.marginY': 'Gap between stickers (top/bottom)',
     'size.invalidHint': 'needs a number with em, px or %',
-    // The two below mark a 尺寸集 in a collapsed panel, where its seven fields
-    // cannot be seen: whether anything was typed into it, and that it opened
-    // itself because a value in it is not a size.
+    // Marks a 尺寸集 in a collapsed panel, where its seven fields cannot be
+    // seen. The one for a value that is not a size is a bare glyph with the
+    // field's own hint as its tooltip: the section opens itself in that case, so
+    // the hint on the offending input is on screen, and a sentence in the header
+    // saying so was a page of panel to say what the open drawer already shows.
     'size.customized': 'changed',
-    'size.openedBecauseInvalid': 'one value here is not a size — opened so you can see which',
+    'size.invalidMark': '!',
 
     // ── 标记形态 ───────────────────────────────────────────────────────────
     'form.label': 'Token forms',
@@ -452,7 +454,7 @@ const ZH_CN = {
     'size.marginY': '表情之间的空隙（上下）',
     'size.invalidHint': '需要数字加 em、px 或 %',
     'size.customized': '已改过',
-    'size.openedBecauseInvalid': '这里有一个值不是尺寸——已展开，方便你看是哪一项',
+    'size.invalidMark': '!',
 
     // ── 标记形态 ───────────────────────────────────────────────────────────
     'form.label': '标记形态',

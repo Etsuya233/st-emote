@@ -82,9 +82,26 @@
  * The section title. The bold is the client's `.inline-drawer-header` styling,
  * inherited by every drawer in the client — restating it here would make ours
  * the one that disagrees if the client ever changes its own.
+ *
+ * The three properties after it are the guarantee that a title is never crushed.
+ * A drawer header is a flex row whose siblings are the marks and the chevron;
+ * without `min-width: 0` a long sibling takes the width it asks for, and this
+ * title is what gets squeezed — into a one-word-per-line column, with the
+ * chevron pushed outside the panel. `flex: 1` puts the slack here, the ellipsis
+ * gives up the tail when there is none, and the chevron keeps its place.
  */
 .st-emote-section-title {
     font-size: 0.9em;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The chevron never yields its width, whatever else is on the row. */
+.st-emote-section .inline-drawer-icon {
+    flex: 0 0 auto;
 }
 
 /*
@@ -301,6 +318,13 @@
     font-size: 0.8em;
     opacity: 0.85;
     white-space: nowrap;
+    /* The marks sit between a truncating title and a fixed chevron, so they may
+     * be the thing that has to give. Shrinking them below their content keeps a
+     * long mark from widening the header; the sentence it carries as a tooltip is
+     * still readable on hover. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .st-emote-size-set-mark {
