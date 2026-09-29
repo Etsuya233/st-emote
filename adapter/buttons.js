@@ -54,7 +54,7 @@ export const ACTION_ICONS = {
 
 /**
  * The glyph itself, for a caller that wants an icon somewhere other than on a
- * button — an overlay on a thumbnail, a marker on a row.
+ * button.
  *
  * `aria-hidden` because the sentence belongs to the control the glyph sits in,
  * and a screen reader reading the glyph's own name would say the action twice.
@@ -62,7 +62,7 @@ export const ACTION_ICONS = {
  * @param {string} icon - A key of `ACTION_ICONS`.
  * @returns {HTMLElement}
  */
-export function actionIcon(icon) {
+function actionIcon(icon) {
     const glyph = document.createElement('i');
     // An unknown key leaves the key itself in the class list, which is loud
     // rather than silent: `tests/panel.test.js` checks every glyph on the panel
