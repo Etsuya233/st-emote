@@ -16,7 +16,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { ACTION_ICONS } from '../adapter/buttons.js';
 import { STORAGE_KEY } from '../adapter/settings.js';
+import { t } from '../core/i18n.js';
+import { FREE_ICON_CLASSES, FREE_ICON_CODEPOINTS } from './contract/font-awesome.js';
 import { fakeFetch, withJsZip, withPanel } from './contract/st-dom.js';
 
 /**
@@ -64,6 +67,18 @@ const CATALOGUE = {
  *   the panel mounts. The debug area reads `SillyTavern.libs` while mounting,
  *   which is when the real client has it too, so a test cannot add it afterwards
  *   and expect the converter to appear.
+ * @param {object} [options.client] - Fields written onto the context **before**
+ *   the panel mounts, for the facts the panel reads once at mount rather than
+ *   per event — a character card naming a pack that is not installed, for
+ *   instance, which is what puts the "create missing packs" button on screen.
+ * @param {(document: Document) => (() => void)|void} [options.arrange] - Drive the
+ *   panel after it mounts, for the controls that only exist once something has
+ *   been ticked. Whatever it returns is run when `body` is done, so the panel's
+ *   module state does not leak into the next test: `selectedStickerIds` in
+ *   `adapter/ui.js` is deliberately kept across re-renders and across mounts,
+ *   because a real user's selection should survive a re-render, and a shared
+ *   one is exactly what makes a later test's control surface depend on an
+ *   earlier test's ticks.
  * @param {(context: any) => void|Promise<void>} body
  */
 async function withPanelMounted(options, body) {
@@ -74,6 +89,7 @@ async function withPanelMounted(options, body) {
             ...structuredClone(CATALOGUE),
             ...(options?.settings ?? {}),
         };
+        Object.assign(harness, options?.client ?? {});
         const stored = options?.storedFiles ?? ['st-emote-d1.png', 'st-emote-d2.png', 'st-emote-z1.png'];
         const fetchImpl = options?.fetch ?? fakeFetch({
             list: { body: stored },
@@ -92,13 +108,19 @@ async function withPanelMounted(options, body) {
             warning: (message) => toasts.push(['warning', message]),
             error: (message) => toasts.push(['error', message]),
         };
+        // Declared out here so the `finally` can undo it even if the mount
+        // throws, and assigned after the first paint — `arrange` drives the
+        // mounted panel, not the settings.
+        let restore = () => {};
         try {
             const { mountSettingsPanel } = await import('../adapter/ui.js');
             mountSettingsPanel(harness);
             // The first paint waits for the stored-file listing, so let it land.
             await new Promise((resolve) => setTimeout(resolve, 0));
+            restore = options?.arrange?.(globalThis.document) ?? (() => {});
             await body({ ...harness, toasts, fetchImpl });
         } finally {
+            restore();
             globalThis.fetch = savedFetch;
             globalThis.SillyTavern = savedClient;
             delete globalThis.window.toastr;
@@ -269,7 +291,7 @@ test('selecting several stickers and deleting them removes the records and calls
         }
 
         const button = document.querySelector('.st-emote-delete-selected');
-        assert.match(button.textContent, /Delete 2 selected/);
+        assert.match(button.getAttribute('aria-label'), /Delete 2 selected/);
         button.click();
         await settle();
 
@@ -840,7 +862,7 @@ test('the re-render button repaints the chat and says so', async () => {
     await withPanelMounted({}, async ({ document, toasts }) => {
         const button = document.getElementById('st_emote_rerender');
         assert.ok(button, 'the re-render button is missing');
-        assert.match(button.textContent, /Re-render the current chat/);
+        assert.equal(button.getAttribute('aria-label'), 'Re-render the current chat');
 
         button.click();
         await settle();
@@ -915,6 +937,343 @@ test('a client with no markdown converter falls back to treating a paste as text
     assert.equal(probe.output.includes('<strong>'), false);
     assert.match(probe.hint, /plain text/i);
     assert.match(probe.hint, /code fence/i);
+});
+
+// ---------------------------------------------------------------------------
+// The panel's interaction: icon buttons and collapsible sections (ticket 11).
+//
+// Two changes, and the failure each one causes is not the same kind of thing.
+// An icon that Font Awesome has never heard of renders as **nothing** — no
+// error, no fallback, just a button that does nothing and says nothing — so
+// what is tested is that every glyph comes from one table and every entry in
+// that table is drawn by somebody. A collapsed section can hide an error, so
+// what is tested is that a 尺寸集 holding a value that is not a size opens
+// itself, and that it opens with the client's own drawer classes rather than
+// with a widget of our own that nobody would remember to keep accessible.
+// ---------------------------------------------------------------------------
+
+test('every icon the panel draws is one whose glyph is in the client\'s free font', async () => {
+    // The one failure this feature cannot detect on its own. Font Awesome
+    // resolves a glyph by class name and draws *nothing* for a name it does not
+    // have: no error, no fallback, nothing in the DOM that says the name was
+    // wrong. A Pro-only name therefore looks exactly like a working one, and
+    // every other test here would report it as a pass.
+    //
+    // `FREE_ICON_CLASSES` is the recorded evidence — each name was resolved
+    // against the client's stylesheet *and* found in the client's free solid
+    // webfont — and the class strings in `ACTION_ICONS` are compared against it,
+    // so a glyph typed into the table by hand has to agree with what was
+    // verified. See `tests/contract/font-awesome.js`.
+    for (const [action, classes] of Object.entries(ACTION_ICONS)) {
+        const recorded = FREE_ICON_CLASSES[action];
+        assert.ok(recorded, `${action} is in ACTION_ICONS but no glyph was verified for it`);
+        const [family, glyph] = classes.split(' ');
+        assert.equal(family, 'fa-solid', `${action} does not ask for the solid family`);
+        assert.equal(
+            glyph,
+            recorded,
+            `${action} draws "${glyph}", which is not the recorded, verified glyph "${recorded}"`,
+        );
+        assert.ok(
+            Number.isInteger(FREE_ICON_CODEPOINTS[action]),
+            `${action} has no recorded codepoint, so nothing was verified about it`,
+        );
+    }
+
+    // And the two chevrons the collapsible headers use, which are not in
+    // `ACTION_ICONS` because they are not buttons. The client picks the class
+    // and the free font has to carry both directions, or a section opens onto a
+    // blank arrow.
+    assert.equal(FREE_ICON_CLASSES.sectionChevronDown, 'fa-circle-chevron-down');
+    assert.equal(FREE_ICON_CLASSES.sectionChevronUp, 'fa-circle-chevron-up');
+});
+
+test('every button draws one of those glyphs, and every one of those is drawn', async () => {
+    // The orphan test, in both directions, because the ticket's failure is a
+    // *dead name left behind*. An entry nothing draws is a name a future button
+    // might reach for, and if it was renamed or dropped from the free set in the
+    // meantime it would fail silently. A class on a button that is not in the
+    // table is the other half: a name nobody ever checked in the first place.
+    const drawn = new Set();
+    for (const state of iconButtonStates()) {
+        // eslint-disable-next-line no-await-in-loop
+        await withPanelMounted(state.options, ({ document }) => {
+            for (const button of document.querySelectorAll('.st-emote-icon-button')) {
+                const handle = buttonHandle(button);
+                const glyph = button.querySelector('.st-emote-icon');
+                assert.ok(glyph, `${handle} has no icon element`);
+                // `fa-solid` is the family rather than a glyph; the other class
+                // is the name, and that is the one that has to be recorded.
+                const fa = [...glyph.classList].filter((name) => name !== 'st-emote-icon');
+                assert.equal(fa.length, 2, `${handle} does not draw exactly one glyph`);
+                for (const name of fa) {
+                    drawn.add(name);
+                }
+            }
+        });
+    }
+
+    // `fa-solid` names the font rather than a glyph — it is what makes the
+    // glyph a *solid* one — so it is allowed on its own and is not a name that
+    // could come back blank.
+    const allowed = new Set(['fa-solid', ...Object.values(FREE_ICON_CLASSES)]);
+    for (const name of drawn) {
+        assert.equal(allowed.has(name), true, `"${name}" is drawn but was never verified`);
+    }
+    for (const name of allowed) {
+        if (name === 'fa-solid' || name.startsWith('fa-circle-chevron-')) {
+            continue; // the family, and the client's own chevrons
+        }
+        assert.ok(
+            drawn.has(name),
+            `"${name}" was verified but no button draws it — a dead name waiting to be reached for`,
+        );
+    }
+
+    // And the buttons themselves: every one is in the table of catalog keys, and
+    // every key in it is a button. Without this, deleting a button would leave
+    // the orphan half above passing happily.
+    const handles = new Set((await iconButtonLabels()).keys());
+    assert.deepEqual(
+        [...handles].sort(),
+        Object.keys(EXPECTED_ICON_BUTTON_KEYS).sort(),
+        'the icon buttons on the panel and the table of catalog keys disagree',
+    );
+});
+
+test('every icon button names itself, in both languages', async () => {
+    // The cost of a glyph is that it does not say what it is. Two things put
+    // the sentence back — a `title` for the pointer and an `aria-label` for a
+    // screen reader — and they come from the *same* catalog key, so a
+    // translation can never reach one and miss the other.
+    //
+    // Looped over every button rather than asserted on one, because the failure
+    // is per-button: a new action added with only a `title` looks correct in
+    // every screenshot ever taken of it.
+    for (const { label, pattern } of [
+        { label: 'English', pattern: /[A-Za-z]/ },
+        { label: 'Chinese', pattern: /[一-鿿]/ },
+    ]) {
+        // eslint-disable-next-line no-await-in-loop
+        const sentences = await collectIconButtonSentences(label, pattern);
+        assert.ok(sentences.length >= 13, `only ${sentences.length} icon buttons were mounted`);
+    }
+});
+
+test('the catalog sentence behind an icon button is the one it used to paint', async () => {
+    // Iconifying must not *lose* a sentence. Each button is paired with the key
+    // it draws, and the key's value has to be the button's tooltip — in both
+    // languages. A key deleted as "no longer the button's text" would fail here.
+    // The `{count}` a few sentences carry is filled in at build time, so the
+    // comparison substitutes a value the key is then asked to substitute — the
+    // point is that the *sentence* is the key's, not the number in it.
+    const PROBE = '7';
+    const english = await iconButtonLabels();
+    for (const [handle, expected] of Object.entries(EXPECTED_ICON_BUTTON_KEYS)) {
+        const sentence = t(expected.key, { count: PROBE });
+        const actual = english.get(handle) ?? '';
+        if (expected.count) {
+            assert.equal(
+                actual.replace(expected.count, PROBE),
+                sentence,
+                `${handle} does not say ${expected.key}`,
+            );
+        } else {
+            assert.equal(actual, sentence, `${handle} does not say ${expected.key}`);
+        }
+    }
+
+    // And in the other language, from the same key — so a translation can never
+    // reach the tooltip and miss the accessible name, or the reverse.
+    const chinese = await iconButtonLabels({ locale: 'zh-cn' });
+    for (const [handle, expected] of Object.entries(EXPECTED_ICON_BUTTON_KEYS)) {
+        const sentence = t(expected.key, { count: PROBE });
+        const actual = chinese.get(handle) ?? '';
+        if (expected.count) {
+            assert.equal(
+                actual.replace(expected.count, PROBE),
+                sentence,
+                `${handle} does not say ${expected.key} in Chinese`,
+            );
+        } else {
+            assert.equal(actual, sentence, `${handle} does not say ${expected.key} in Chinese`);
+        }
+        assert.notEqual(actual, english.get(handle), `${handle} is not translated`);
+    }
+});
+
+test('the sections that hold an explanation start collapsed, and use the client\'s drawer', async () => {
+    // Two things at once, because they are one commitment. The list is what the
+    // ticket decided collapses; the class names are how "we used the client's
+    // drawer" becomes checkable rather than a claim in a comment. A hand-rolled
+    // `<details>`, a `max-height` transition or a bespoke toggle would fail
+    // here even if it looked right.
+    await withPanelMounted({}, ({ document }) => {
+        for (const title of ['Listing macro', 'Context-clearing regex', 'Import and export a pack']) {
+            const section = sectionByTitle(document, title);
+            assert.ok(section, `no section titled "${title}"`);
+            assert.equal(section.classList.contains('inline-drawer'), true, `${title} is not a drawer`);
+
+            const toggle = section.querySelector(':scope > .inline-drawer-toggle');
+            const content = section.querySelector(':scope > .inline-drawer-content');
+            assert.ok(toggle, `${title} has no .inline-drawer-toggle`);
+            assert.ok(content, `${title} has no .inline-drawer-content`);
+            // The state lives on the header, which is the control — a section
+            // that announced its own state would be a second, unspeakable one.
+            assert.equal(toggle.getAttribute('aria-expanded'), 'false', `${title} starts open`);
+            assert.equal(content.style.display, 'none', `${title} is not hidden`);
+            // The two classes the client's own click handler looks for, by
+            // direct child of the drawer — a toggle nested one level deeper
+            // would not be found, and the section would never open.
+            assert.equal(toggle.classList.contains('inline-drawer-header'), true);
+            assert.equal(toggle.parentElement, section);
+            assert.equal(content.parentElement, section);
+            // The chevron, in the closed state the client expects to find.
+            const icon = section.querySelector(':scope > .inline-drawer-toggle > .inline-drawer-icon');
+            assert.ok(icon, `${title} has no chevron`);
+            assert.equal(icon.classList.contains('down'), true, `${title} does not start pointing down`);
+            assert.equal(icon.classList.contains('fa-circle-chevron-down'), true);
+        }
+    });
+});
+
+test('the settings that are not explanations are not behind a header', async () => {
+    // The other half of the ticket's table, and the half that is easy to
+    // over-apply. 投放方式 is one select, 标记 is one input, and the 处理 group
+    // holds the 总开关: hiding the master switch behind a header would be
+    // hiding it. This asserts they are *reachable without a click* rather than
+    // that they lack a class.
+    await withPanelMounted({}, ({ document }) => {
+        for (const id of [
+            'st_emote_enabled',
+            'st_emote_render_user',
+            'st_emote_bracket_form',
+            'st_emote_tag_form',
+            'st_emote_tag_name',
+            'st_emote_placement',
+        ]) {
+            const control = document.getElementById(id);
+            assert.ok(control, `#${id} is missing`);
+            const section = control.closest('.st-emote-section');
+            assert.equal(section, null, `#${id} is behind a collapsible header`);
+        }
+        // The search box too: it filters the list right below it, so it is the
+        // one control a user reaches for without deciding to open anything.
+        assert.equal(document.getElementById('st_emote_search').closest('.st-emote-section'), null);
+    });
+});
+
+test('a 尺寸集 holding a value that is not a size opens itself', async () => {
+    // The one this ticket exists to get right. A refused size shows a hint
+    // beside the input that was refused; a collapsed section would store the
+    // value, log it, and hide the only place the user could learn about it. The
+    // section opens itself, says why, and its content is reachable.
+    await withPanelMounted({
+        settings: { sizes: { inline: { maxHeight: 'not a size' } } },
+    }, ({ document }) => {
+        const section = document.querySelector('.st-emote-size-set');
+        const toggle = section.querySelector('.inline-drawer-toggle');
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'the 尺寸集 stayed closed');
+        assert.equal(
+            section.querySelector('.st-emote-size-set-invalid') !== null,
+            true,
+            'the header does not say why it opened',
+        );
+        // The hint itself is where it always was: beside the input, inside the
+        // content the user can now actually see.
+        const hint = section.querySelector('.st-emote-hint-bad');
+        assert.ok(hint, 'the invalid hint is not in the section');
+        assert.equal(
+            hint.closest('.inline-drawer-content'),
+            section.querySelector('.inline-drawer-content'),
+        );
+
+        // The other set has no bad value, so it is still closed.
+        const other = document.querySelectorAll('.st-emote-size-set')[1];
+        assert.equal(other.querySelector('.inline-drawer-toggle').getAttribute('aria-expanded'), 'false');
+    });
+});
+
+test('a 尺寸 set with every value valid opens collapsed again on the next mount', async () => {
+    // "Until the value is fixed or cleared" is a claim about the state, not
+    // about the moment: the section opens while the value is unusable and goes
+    // back to the default the next time the panel is built. Storage is what
+    // decides, so the fix is a settings change and a remount.
+    await withPanelMounted({ settings: { sizes: { inline: { maxHeight: '2em' } } } }, ({ document }) => {
+        for (const section of document.querySelectorAll('.st-emote-size-set')) {
+            assert.equal(section.querySelector('.inline-drawer-toggle').getAttribute('aria-expanded'), 'false');
+            assert.equal(section.querySelector('.st-emote-size-set-invalid'), null);
+        }
+    });
+    // And the same shape with the bad value back: it opens again, so the state
+    // is read from the value rather than remembered from a previous mount.
+    await withPanelMounted({
+        settings: { sizes: { inline: { maxHeight: 'not a size' } } },
+    }, ({ document }) => {
+        assert.equal(
+            document.querySelector('.st-emote-size-set .inline-drawer-toggle')
+                .getAttribute('aria-expanded'),
+            'true',
+        );
+    });
+});
+
+test('a 尺寸 set that has been changed says so on its collapsed header', async () => {
+    // Both sets are seven empty fields by default, so two collapsed sets look
+    // identical and neither is worth opening. The one with a value in it is the
+    // one the user is looking for, so the header says which.
+    await withPanelMounted({}, ({ document }) => {
+        for (const section of document.querySelectorAll('.st-emote-size-set')) {
+            assert.equal(section.querySelector('.st-emote-size-set-mark'), null, 'an untouched set is marked');
+        }
+    });
+    await withPanelMounted({
+        settings: { sizes: { inline: { maxHeight: '2em' } } },
+    }, ({ document }) => {
+        const [inline, block] = document.querySelectorAll('.st-emote-size-set');
+        assert.equal(inline.querySelector('.st-emote-size-set-mark') !== null, true);
+        assert.equal(block.querySelector('.st-emote-size-set-mark'), null);
+    });
+});
+
+test('clicking a section header flips the state the client will animate', async () => {
+    // jsdom has no jQuery, so it cannot check that the client *animates* the
+    // content. What it can check is that our half agrees with the client's half
+    // about which way it is going: the header advertises `aria-expanded` and the
+    // chevron points the other way, and the chevron is the class the client
+    // toggles. A header whose `aria-expanded` never moved would be a header
+    // lying to a screen reader while looking perfectly correct.
+    await withPanelMounted({}, ({ document }) => {
+        const toggle = sectionByTitle(document, 'Listing macro').querySelector('.inline-drawer-toggle');
+        const icon = toggle.querySelector('.inline-drawer-icon');
+
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(icon.classList.contains('down'), true);
+
+        toggle.click();
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+        assert.equal(icon.classList.contains('up'), true);
+        assert.equal(icon.classList.contains('fa-circle-chevron-up'), true);
+        assert.equal(icon.classList.contains('down'), false);
+
+        toggle.click();
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(icon.classList.contains('down'), true);
+        assert.equal(icon.classList.contains('up'), false);
+    });
+});
+
+test('no collapsible section is built as a widget of our own', async () => {
+    // The failure this catches is someone reaching past `collapsibleSection`
+    // because a `<details>` was quicker, or because a `max-height` animation
+    // looked nicer. Both are invisible in a screenshot of a *working* panel and
+    // both throw away the client's keyboard handling and styling.
+    await withPanelMounted({}, ({ document }) => {
+        for (const section of document.querySelectorAll('.st-emote-section')) {
+            assert.equal(section.classList.contains('inline-drawer'), true);
+            assert.equal(section.querySelector('details, summary'), null);
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1102,8 +1461,54 @@ test('every class the 尺寸 controls toggle is styled', async () => {
  * exist, and recording it would mean the snapshot fails on every styling pass
  * while still not noticing one control appearing or disappearing. Their being
  * styled at all is the subject of their own test.
+ *
+ * `st-emote-icon-button` is in the same position as `st-emote-button` and for
+ * the same reason: it says how a button is drawn, not what it does. It is
+ * excluded rather than recorded so that iconifying every button on the panel
+ * did not have to rewrite 30-odd lines of the snapshot — which is the point,
+ * since a diff full of one added class is a diff nobody reads carefully.
  */
-const PRESENTATION_HOOKS = ['st-emote-button'];
+const PRESENTATION_HOOKS = ['st-emote-button', 'st-emote-icon-button'];
+
+/**
+ * Which catalog key each icon button says, by the query hook that reaches it.
+ *
+ * The hard boundary of ticket 11 in one table: these are the **actions**, and
+ * each one's sentence moved from the button's text into its tooltip. Every key
+ * here still exists in both catalogs — nothing was deleted, which the test
+ * above checks by comparing each button against `t(key)` rather than against a
+ * literal.
+ *
+ * **Deliberately absent**: every 标签 on the panel — the select captions, the
+ * size-field names, the checkbox descriptions, and the colon-prefixed "HTML tag
+ * form:". A field's name is not an action, and an interface where even the
+ * field names are glyphs is one a user has to navigate from memory. That is a
+ * boundary of this feature, so it is written down here rather than left to the
+ * next person to re-decide.
+ *
+ * @type {Record<string, {key: string, count?: RegExp}>}
+ */
+const EXPECTED_ICON_BUTTON_KEYS = {
+    '#st_emote_create_pack': { key: 'panel.createPack' },
+    '#st_emote_copy_regex': { key: 'panel.copyRegex' },
+    '#st_emote_import_pack': { key: 'panel.importPack' },
+    // The only action button with neither a per-action hook nor an id, because it
+    // had neither before this ticket either. Reached through its container.
+    '#st_emote_missing .menu_button': { key: 'panel.createMissingPacks' },
+    'st-emote-upload': { key: 'pack.uploadImages' },
+    'st-emote-add-url': { key: 'pack.addImageUrl' },
+    'st-emote-export': { key: 'pack.exportZip' },
+    'st-emote-delete-pack': { key: 'pack.deletePack' },
+    // The count is whichever stickers *this* pack has ticked, so it differs
+    // from pack to pack and is matched as a number rather than pinned. The
+    // count itself is the subject of the batch-delete test above; what matters
+    // here is that the sentence is still this key and not a new one.
+    'st-emote-delete-selected': { key: 'pack.deleteSelected', count: /\d+/ },
+    'st-emote-replace': { key: 'sticker.replace' },
+    'st-emote-sticker-delete': { key: 'sticker.delete' },
+    '#st_emote_preview_run': { key: 'panel.previewRun' },
+    '#st_emote_rerender': { key: 'panel.rerender' },
+};
 
 /**
  * Classes the panel applies to be *found* rather than to be styled: the
@@ -1254,7 +1659,8 @@ function controlRegion(element) {
     }
     const sizeSet = element.closest('.st-emote-size-set');
     if (sizeSet) {
-        return `尺寸集 "${sizeSet.querySelector('.st-emote-size-set-title').textContent}"`;
+        // The set's name is its drawer title now, not a heading of its own.
+        return `尺寸集 "${sizeSet.querySelector('.st-emote-section-title').textContent}"`;
     }
     if (element.closest('.st-emote-debug')) {
         return 'debug area';
@@ -1273,7 +1679,10 @@ function controlRegion(element) {
  */
 function controlCaption(element) {
     if (element.classList.contains('menu_button')) {
-        return `"${element.textContent}"`;
+        // An action button is a glyph now, so the sentence it carries is the
+        // one a user reads on hover and a screen reader announces — the same
+        // catalog key either way, which is why the snapshot below is unchanged.
+        return `"${element.getAttribute('aria-label') ?? ''}"`;
     }
     const label = element.closest('label');
     if (label) {
@@ -1414,6 +1823,149 @@ async function panelText(options) {
         collected = parts.join('\n');
     });
     return collected;
+}
+
+/**
+ * The panel states between them reach every button the panel can draw.
+ *
+ * Three, not one, and for the same reason the class-coverage test above uses
+ * two: several buttons exist only in some states. `deleteSelected` needs a
+ * ticked sticker; `createMissingPacks` needs a character card naming a pack
+ * that is not installed. A single ordinary render would check a third of the
+ * icon table and pass anyway, and the orphan half of the test above would then
+ * be asserting against a partial `drawn` set.
+ *
+ * @returns {{options: object}[]}
+ */
+function iconButtonStates() {
+    return [
+        { options: {} },
+        { options: { storedFiles: [] } },
+        {
+            options: {
+                client: {
+                    characterId: 0,
+                    characters: [{
+                        avatar: 'someone.png',
+                        data: { extensions: { [STORAGE_KEY]: { enabledPackNames: ['not-installed'] } } },
+                    }],
+                    chat: [{ mes: 'hi', original_avatar: 'someone.png' }],
+                },
+            },
+        },
+        {
+            // `deleteSelected` exists only while something is ticked, and each
+            // tick rebuilds the pack list — so this is the state where it has to
+            // be caught, and the only way to catch it at all. Un-ticking is the
+            // same code path in reverse, which also exercises it.
+            options: {
+                arrange: (document) => {
+                    const ticks = [...document.querySelectorAll('.st-emote-sticker-tick')];
+                    for (const tick of ticks) {
+                        tick.checked = true;
+                        tick.dispatchEvent(new globalThis.window.Event('change'));
+                    }
+                    return () => {
+                        for (const tick of document.querySelectorAll('.st-emote-sticker-tick')) {
+                            tick.checked = false;
+                            tick.dispatchEvent(new globalThis.window.Event('change'));
+                        }
+                    };
+                },
+            },
+        },
+    ];
+}
+
+/**
+ * Every icon button's tooltip and its accessible name, mounted in one locale.
+ *
+ * @param {string} label - Which language, for the failure message.
+ * @param {RegExp} pattern - What that language's sentences look like, so a
+ *   button that fell back to the source catalog is caught rather than passed.
+ * @returns {Promise<string[]>}
+ */
+async function collectIconButtonSentences(label, pattern) {
+    const sentences = [];
+    for (const state of iconButtonStates()) {
+        // eslint-disable-next-line no-await-in-loop
+        await withPanelMounted({ ...state.options, locale: label === 'Chinese' ? 'zh-cn' : 'en' }, ({ document }) => {
+            for (const button of document.querySelectorAll('.st-emote-icon-button')) {
+                const where = buttonHandle(button);
+                const title = button.getAttribute('title') ?? '';
+                const aria = button.getAttribute('aria-label') ?? '';
+                assert.notEqual(title, '', `${where} has no title in ${label}`);
+                assert.equal(aria, title, `${where} announces something other than it says in ${label}`);
+                assert.match(aria, pattern, `${where} does not say anything in ${label}: "${aria}"`);
+                sentences.push(aria);
+            }
+        });
+    }
+    return sentences;
+}
+
+/**
+ * Every icon button's tooltip, keyed by the query hook a test can reach it by.
+ * A hook with no button is a wrong key rather than a missing control, so the
+ * two are told apart by the caller.
+ *
+ * @param {{locale?: string}} [options]
+ * @returns {Promise<Map<string, string>>}
+ */
+async function iconButtonLabels(options = {}) {
+    const labels = new Map();
+    for (const state of iconButtonStates()) {
+        // eslint-disable-next-line no-await-in-loop
+        await withPanelMounted({ ...state.options, locale: options.locale }, ({ document }) => {
+            for (const button of document.querySelectorAll('.st-emote-icon-button')) {
+                labels.set(buttonHandle(button), button.getAttribute('aria-label') ?? '');
+            }
+        });
+    }
+    return labels;
+}
+
+/**
+ * How a test names one button.
+ *
+ * The id where the panel has one — the three skeleton actions and the two
+ * debug actions are found by id in the code that wires them up, and inventing a
+ * second handle for the same button would be a second thing to keep in step.
+ * The per-action hook class otherwise, which is what the rest of the panel uses.
+ *
+ * @param {Element} button
+ * @returns {string}
+ */
+function buttonHandle(button) {
+    if (button.id !== '') {
+        return `#${button.id}`;
+    }
+    const hook = [...button.classList]
+        .find((name) => name.startsWith('st-emote-') && !PRESENTATION_HOOKS.includes(name));
+    if (hook) {
+        return hook;
+    }
+    // One button has neither: the "create missing packs" action, which was the
+    // only one without a per-action hook before this ticket and stayed that way
+    // rather than grow a class purely so a test could name it.
+    assert.equal(
+        button.closest('#st_emote_missing') !== null,
+        true,
+        `"${button.getAttribute('aria-label')}" has neither an id nor a query hook`,
+    );
+    return '#st_emote_missing .menu_button';
+}
+
+/**
+ * The one collapsible section carrying a given header sentence.
+ *
+ * @param {Document} document
+ * @param {string} title
+ * @returns {Element|null}
+ */
+function sectionByTitle(document, title) {
+    return [...document.querySelectorAll('.st-emote-section')]
+        .find((section) => section.querySelector('.st-emote-section-title')?.textContent === title) ?? null;
 }
 
 /**
