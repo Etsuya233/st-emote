@@ -927,21 +927,25 @@ function buildScopeToggle(label, checked, onChange, disabled = false) {
 /**
  * One 表情, as two rows.
  *
- * **First row**: the tick, the thumbnail, the 标签 and the 投放方式 override. The
- * 标签 is the 标识 — it is what a token names, so it has to be readable at a
- * glance — and the tick and the thumbnail are fixed-width, so none of the three
- * can be squeezed by what follows them.
+ * **First row**: the tick, the thumbnail, the 标签 and the row's badges. The 标签
+ * is the 标识 — it is what a token names, so it has to be readable at a glance —
+ * and the tick and the thumbnail are fixed-width, so none of them can be squeezed
+ * by what follows. This row carries nothing else, which is what leaves the 标签
+ * the whole width in a narrow panel.
  *
- * **Second row**: the 描述 across the whole width, then the two image actions.
- * The 描述 is the content rather than the identity and is usually a full
- * sentence, so it is the field that needs the width most; sharing one line with a
+ * **Second row**: the 描述 across the width, then the 投放方式 override and the two
+ * image actions. The 描述 is content rather than identity and is usually a full
+ * sentence, so it is the field that needs width most; sharing one line with a
  * thumbnail, a tick and a select is what truncated it to "测试表情,详".
  *
- * The two rows read top to bottom, and that is also the tab order — with one
- * consequence worth knowing: 描述 and 投放方式 have swapped places in it. They
- * shared a single line before, and splitting that line between them is the whole
- * point, so the order follows the rows rather than the old markup. Nothing else
- * about the row's behaviour changes with its shape.
+ * **The 投放方式 override is on the second row on purpose, not by accident.** It
+ * is a per-sticker override almost nobody touches, so wedging it between the 标签
+ * and the 描述 — which is where the one-line layout put it — costs the two fields
+ * a user does type into, and puts a rarely-used select in the middle of the tab
+ * order. Down here it sits with the actions it modifies, and the row's tab order
+ * is **exactly what it was before the split**: 标签, 描述, 投放方式, Replace, Delete.
+ * A reflow that silently reorders what Tab reaches is the kind of thing nobody
+ * notices until it annoys them daily.
  *
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
@@ -1011,8 +1015,6 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         ));
     }
 
-    top.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
-
     const detail = document.createElement('div');
     detail.className = 'st-emote-sticker-detail';
     row.append(detail);
@@ -1035,6 +1037,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         context.saveSettingsDebounced();
     });
     detail.append(descriptionInput);
+    detail.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
 
     const actions = document.createElement('div');
     actions.className = 'st-emote-actions';

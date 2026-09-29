@@ -944,7 +944,7 @@ test('the panel still offers exactly the controls it offered before the layout r
     });
 });
 
-test('a sticker row is two rows: the 标签 on top with the 投放方式, the 描述 below', async () => {
+test('a sticker row is two rows: the 标签 alone on top, the 描述 and the override below', async () => {
     await withPanelMounted({}, ({ document }) => {
         const row = stickerRow(document, 'daily', 'happy');
         const top = row.querySelector('.st-emote-sticker-main');
@@ -963,9 +963,12 @@ test('a sticker row is two rows: the 标签 on top with the 投放方式, the �
         }
         assert.equal(bottom.querySelector('.st-emote-description') !== null, true);
         assert.equal(top.querySelector('.st-emote-description'), null);
-        // The 投放方式 override rides on the first row; the two image actions sit
-        // with the 描述 they belong to.
-        assert.equal(top.querySelector('.st-emote-sticker-placement') !== null, true);
+        // The 投放方式 override is a rarely-used per-sticker setting, so it sits on
+        // the second row with the actions rather than between the two fields a user
+        // actually types into. This also keeps the row's tab order identical to what
+        // the one-line layout gave: 标签, 描述, 投放方式, Replace, Delete.
+        assert.equal(top.querySelector('.st-emote-sticker-placement'), null);
+        assert.equal(bottom.querySelector('.st-emote-sticker-placement') !== null, true);
         for (const selector of ['.st-emote-replace', '.st-emote-sticker-delete']) {
             assert.equal(bottom.querySelector(selector) !== null, true, `${selector} is not on the second row`);
         }
