@@ -19,6 +19,8 @@
 import { escapeText } from '../core/escape.js';
 import { t } from '../core/i18n.js';
 import { buildPreview, formatPreview } from '../core/preview.js';
+import { iconize } from './buttons.js';
+import { collapsibleSection } from './collapsible.js';
 import { toast } from './dialogs.js';
 import { useClientLocale } from './locale.js';
 import { logInfo } from './log.js';
@@ -82,8 +84,14 @@ function messageBodyPreparer() {
  */
 export function mountDebugSection(context, root) {
     useClientLocale(context);
+    // The whole tool is a collapsed section: it is something to reach for when
+    // something renders wrong, not a set of settings, and left open it is four
+    // rows of panel in the middle of the things a user came to change. Its two
+    // controls are icons like every other action, and the preview box is where
+    // the reason it is collapsed is paid off — the user opened it to look.
+    const drawer = collapsibleSection({ title: t('panel.debugTitle'), className: 'st-emote-debug' });
     const section = document.createElement('div');
-    section.className = 'st-emote-debug';
+    section.className = 'st-emote-debug-body';
     section.innerHTML = [
         '<div class="st-emote-hint"></div>',
         '<textarea class="text_pole" id="st_emote_preview" rows="4"></textarea>',
@@ -98,9 +106,12 @@ export function mountDebugSection(context, root) {
     section.querySelector('.st-emote-hint').textContent = t('panel.debugHint');
     const input = section.querySelector('#st_emote_preview');
     input.placeholder = t('panel.previewPlaceholder');
-    const runButton = section.querySelector('#st_emote_preview_run');
-    runButton.textContent = t('panel.previewRun');
-    section.querySelector('#st_emote_rerender').textContent = t('panel.rerender');
+    const runButton = iconize(
+        section.querySelector('#st_emote_preview_run'),
+        'previewRun',
+        t('panel.previewRun'),
+    );
+    iconize(section.querySelector('#st_emote_rerender'), 'rerender', t('panel.rerender'));
 
     const note = section.querySelector('#st_emote_preview_note');
     const output = section.querySelector('#st_emote_preview_out');
@@ -132,5 +143,6 @@ export function mountDebugSection(context, root) {
         logInfo(`repainted the current chat on request (${repainted} message(s))`);
     });
 
-    return section;
+    drawer.content.append(section);
+    return drawer.section;
 }
