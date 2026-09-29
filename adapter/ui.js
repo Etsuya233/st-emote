@@ -208,7 +208,17 @@ function panelSkeleton() {
         '</div>',
         '<div class="inline-drawer-content">',
         '<div class="st-emote-hint" id="st_emote_intro"></div>',
-        '<div class="st-emote-options">',
+        // Three groups rather than one column of equal-density controls: 处理
+        // (what gets rendered at all), 标记 (what the token is written with) and
+        // 外观 (where a rendered one lands and how big it is). The grouping is
+        // carried by a rhythm and a hairline between groups — no headings, because
+        // the sentences would need two catalogs to say something the spacing
+        // already says.
+        //
+        // `st-emote-group` and not `st-emote-block`: the latter is the class on a
+        // 块后 image, and two meanings for one word is the kind of thing that
+        // reads wrong six months later.
+        '<div class="st-emote-group">',
         '<label class="st-emote-option">',
         '<input type="checkbox" id="st_emote_enabled"> <span id="st_emote_enabled_label"></span>',
         '</label>',
@@ -224,11 +234,14 @@ function panelSkeleton() {
         '<input type="checkbox" id="st_emote_tag_form"> <span id="st_emote_tag_form_label"></span>',
         '</label>',
         '<div class="st-emote-hint" id="st_emote_form_hint"></div>',
+        '</div>',
+        '<div class="st-emote-group">',
         '<label class="st-emote-option">',
         '<span id="st_emote_tag_name_label"></span>',
         '<input type="text" class="text_pole" id="st_emote_tag_name">',
         '</label>',
         '</div>',
+        '<div class="st-emote-group">',
         '<div class="st-emote-hint" id="st_emote_size_hint"></div>',
         '<div class="st-emote-placement">',
         '<label class="st-emote-field">',
@@ -237,20 +250,21 @@ function panelSkeleton() {
         '</label>',
         '</div>',
         '<div id="st_emote_sizes" class="st-emote-sizes"></div>',
+        '</div>',
         '<div class="st-emote-create">',
         '<input type="text" class="text_pole" id="st_emote_new_pack">',
-        '<div class="menu_button" id="st_emote_create_pack"></div>',
+        '<div class="menu_button st-emote-button" id="st_emote_create_pack"></div>',
         '</div>',
         '<div id="st_emote_missing" class="st-emote-missing"></div>',
         '<div class="st-emote-hint" id="st_emote_macro_hint"></div>',
         '<pre class="st-emote-code" id="st_emote_macro_example"></pre>',
         '<div class="st-emote-hint" id="st_emote_regex_hint"></div>',
         '<pre class="st-emote-code" id="st_emote_regex"></pre>',
-        '<div class="menu_button" id="st_emote_copy_regex"></div>',
+        '<div class="menu_button st-emote-button" id="st_emote_copy_regex"></div>',
         '<div class="st-emote-hint" id="st_emote_transfer_hint"></div>',
         '<div class="st-emote-import">',
         '<input type="text" class="text_pole" id="st_emote_search">',
-        '<div class="menu_button" id="st_emote_import_pack"></div>',
+        '<div class="menu_button st-emote-button" id="st_emote_import_pack"></div>',
         '</div>',
         '<div id="st_emote_packs" class="st-emote-packs"></div>',
         '</div>',
@@ -464,13 +478,20 @@ const PACK_STATE_LABEL_KEYS = {
 /**
  * A small labelled button, the shape almost every action in a pack row uses.
  *
+ * `st-emote-button` goes on every one of them and is the single rule that keeps
+ * an action's label on one line: the client's own `.menu_button` is a flex
+ * column, so a button with no room turns its label into a two-, three- or
+ * four-line block. One hook means the pack header, a sticker row and the debug
+ * area cannot drift apart, and a button added later is covered without being
+ * told about it.
+ *
  * @param {string} label
  * @param {string} [className]
  * @returns {HTMLDivElement}
  */
 function actionButton(label, className = '') {
     const button = document.createElement('div');
-    button.className = `menu_button ${className}`.trim();
+    button.className = `menu_button st-emote-button ${className}`.trim();
     button.textContent = label;
     return button;
 }
@@ -627,34 +648,50 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
         ));
     }
 
-    header.append(filePickerButton(
+    // The pack's own actions, in one wrapping group. The group wrapping is the
+    // point: a button that cannot fit moves to the next line as a whole, while
+    // its label stays on one line inside it. Deleting the pack is set apart from
+    // the three reversible ones, because it is the only one of the four the panel
+    // cannot take back.
+    const actions = document.createElement('div');
+    actions.className = 'st-emote-actions';
+    actions.append(filePickerButton(
         t('pack.uploadImages'),
         { accept: ACCEPTED_MIME, multiple: true, className: 'st-emote-upload' },
         (files) => handleUploads(context, pack, files, refresh),
     ));
     const addUrl = actionButton(t('pack.addImageUrl'), 'st-emote-add-url');
-    header.append(addUrl);
+    actions.append(addUrl);
     addUrl.addEventListener('click', async () => {
         await handleExternalUrl(context, pack, refresh);
     });
 
     if (!searching) {
         const exportButton = actionButton(t('pack.exportZip'), 'st-emote-export');
-        header.append(exportButton);
+        actions.append(exportButton);
         exportButton.addEventListener('click', async () => {
             await handleExport(context, pack);
         });
         const deleteButton = actionButton(t('pack.deletePack'), 'st-emote-delete-pack');
-        header.append(deleteButton);
+        actions.append(deleteButton);
         deleteButton.addEventListener('click', async () => {
             await handleDeletePack(context, pack, refresh);
         });
     }
 
-    header.append(buildScopeToggles(context, pack));
+    header.append(actions);
     wrapper.append(header);
 
-    wrapper.append(buildSelectionBar(context, pack, visible, refresh, searching));
+    // The 作用域 toggles and "Select all" share one row: they are both about
+    // which stickers are in play, and either can claim the width the sticker rows
+    // below actually need.
+    const controls = document.createElement('div');
+    controls.className = 'st-emote-pack-controls';
+    controls.append(
+        buildScopeToggles(context, pack),
+        buildSelectionBar(context, pack, visible, refresh, searching),
+    );
+    wrapper.append(controls);
 
     const list = document.createElement('div');
     list.className = 'st-emote-stickers';
@@ -888,6 +925,28 @@ function buildScopeToggle(label, checked, onChange, disabled = false) {
 }
 
 /**
+ * One 表情, as two rows.
+ *
+ * **First row**: the tick, the thumbnail, the 标签 and the row's badges. The 标签
+ * is the 标识 — it is what a token names, so it has to be readable at a glance —
+ * and the tick and the thumbnail are fixed-width, so none of them can be squeezed
+ * by what follows. This row carries nothing else, which is what leaves the 标签
+ * the whole width in a narrow panel.
+ *
+ * **Second row**: the 描述 across the width, then the 投放方式 override and the two
+ * image actions. The 描述 is content rather than identity and is usually a full
+ * sentence, so it is the field that needs width most; sharing one line with a
+ * thumbnail, a tick and a select is what truncated it to "测试表情,详".
+ *
+ * **The 投放方式 override is on the second row on purpose, not by accident.** It
+ * is a per-sticker override almost nobody touches, so wedging it between the 标签
+ * and the 描述 — which is where the one-line layout put it — costs the two fields
+ * a user does type into, and puts a rarely-used select in the middle of the tab
+ * order. Down here it sits with the actions it modifies, and the row's tab order
+ * is **exactly what it was before the split**: 标签, 描述, 投放方式, Replace, Delete.
+ * A reflow that silently reorders what Tab reaches is the kind of thing nobody
+ * notices until it annoys them daily.
+ *
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
  * @param {import('./settings.js').StickerRecord} sticker
@@ -898,6 +957,10 @@ function buildScopeToggle(label, checked, onChange, disabled = false) {
 function buildStickerElement(context, pack, sticker, refresh, searching) {
     const row = document.createElement('div');
     row.className = 'st-emote-sticker';
+
+    const top = document.createElement('div');
+    top.className = 'st-emote-sticker-main';
+    row.append(top);
 
     const tick = document.createElement('input');
     tick.type = 'checkbox';
@@ -912,9 +975,9 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         }
         refresh();
     });
-    row.append(tick);
+    top.append(tick);
 
-    row.append(buildStickerThumb(sticker));
+    top.append(buildStickerThumb(sticker));
 
     const labelInput = document.createElement('input');
     labelInput.type = 'text';
@@ -939,18 +1002,22 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         }
         refresh();
     });
-    row.append(labelInput);
+    top.append(labelInput);
 
     if (!normalizeLabel(sticker.label)) {
-        row.append(badge(t('sticker.unlabeled')));
+        top.append(badge(t('sticker.unlabeled')));
     }
     if (isExternalImageUrl(sticker.image)) {
-        row.append(badge(
+        top.append(badge(
             t('sticker.external'),
             'st-emote-badge-external',
             t('sticker.externalTitle'),
         ));
     }
+
+    const detail = document.createElement('div');
+    detail.className = 'st-emote-sticker-detail';
+    row.append(detail);
 
     const descriptionInput = document.createElement('input');
     descriptionInput.type = 'text';
@@ -969,25 +1036,27 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
         sticker.description = result.value;
         context.saveSettingsDebounced();
     });
-    row.append(descriptionInput);
-    row.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
+    detail.append(descriptionInput);
+    detail.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
 
-    const replace = filePickerButton(
+    const actions = document.createElement('div');
+    actions.className = 'st-emote-actions';
+    actions.append(filePickerButton(
         t('sticker.replace'),
         { accept: ACCEPTED_MIME, className: 'st-emote-replace' },
         async (files) => {
             await replaceStickerImageWithFile(context, pack, sticker, refresh, files[0]);
         },
-    );
-    row.append(replace);
+    ));
 
     if (!searching) {
         const remove = actionButton(t('sticker.delete'), 'st-emote-sticker-delete');
         remove.addEventListener('click', async () => {
             await handleStickerDelete(context, pack, sticker, refresh);
         });
-        row.append(remove);
+        actions.append(remove);
     }
+    detail.append(actions);
 
     return row;
 }

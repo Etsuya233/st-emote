@@ -14,6 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { STORAGE_KEY } from '../adapter/settings.js';
 import { fakeFetch, withJsZip, withPanel } from './contract/st-dom.js';
@@ -915,6 +916,481 @@ test('a client with no markdown converter falls back to treating a paste as text
     assert.match(probe.hint, /plain text/i);
     assert.match(probe.hint, /code fence/i);
 });
+
+// ---------------------------------------------------------------------------
+// The panel's layout (ticket 10).
+//
+// The 观感 of the panel is CSS, and jsdom cannot see any of it. What jsdom *can*
+// see is the thing that would wreck a pure-layout change by accident: the set of
+// controls. So the tests below hold two lines.
+//   1. the control set is exactly what it was before the reflow (one snapshot);
+//   2. the shape the reflow is supposed to have actually happened.
+// ---------------------------------------------------------------------------
+
+test('the panel still offers exactly the controls it offered before the layout reflow', async () => {
+    // The guard for the whole ticket. A layout change is allowed to move
+    // controls around the panel; it is not allowed to add one, drop one, rename
+    // one or change what one says. This list is the panel's control surface as
+    // it stood before anything moved, and a line appearing or disappearing is a
+    // real finding rather than a snapshot to be updated.
+    //
+    // Every control is one line: **where** it is, **what** it is (tag, input
+    // type, id, classes, and for a select the choices it offers), and **what it
+    // says** (its caption, or its title / placeholder where there is none). The
+    // sort makes the list indifferent to the order the panel happens to build
+    // things in, which is the one thing a reflow is allowed to change.
+    await withPanelMounted({}, ({ document }) => {
+        assert.deepEqual(controlSurface(document), EXPECTED_CONTROL_SURFACE);
+    });
+});
+
+test('a sticker row is two rows: the 标签 alone on top, the 描述 and the override below', async () => {
+    await withPanelMounted({}, ({ document }) => {
+        const row = stickerRow(document, 'daily', 'happy');
+        const top = row.querySelector('.st-emote-sticker-main');
+        const bottom = row.querySelector('.st-emote-sticker-detail');
+
+        assert.ok(top, 'the sticker row has no first row');
+        assert.ok(bottom, 'the sticker row has no second row');
+        // Two rows, and only two: a third would mean something moved back up.
+        assert.deepEqual([...row.children], [top, bottom]);
+
+        // The 标签 is the 标识 and has to be readable at a glance, so it stays on
+        // top; the 描述 is content and gets the width of the whole row below.
+        for (const selector of ['.st-emote-sticker-tick', '.st-emote-thumb', '.st-emote-label']) {
+            assert.equal(top.querySelector(selector)?.closest('.st-emote-sticker') === row, true, selector);
+            assert.equal(top.querySelector(selector) !== null, true, `${selector} is not on the first row`);
+        }
+        assert.equal(bottom.querySelector('.st-emote-description') !== null, true);
+        assert.equal(top.querySelector('.st-emote-description'), null);
+        // The 投放方式 override is a rarely-used per-sticker setting, so it sits on
+        // the second row with the actions rather than between the two fields a user
+        // actually types into. This also keeps the row's tab order identical to what
+        // the one-line layout gave: 标签, 描述, 投放方式, Replace, Delete.
+        assert.equal(top.querySelector('.st-emote-sticker-placement'), null);
+        assert.equal(bottom.querySelector('.st-emote-sticker-placement') !== null, true);
+        for (const selector of ['.st-emote-replace', '.st-emote-sticker-delete']) {
+            assert.equal(bottom.querySelector(selector) !== null, true, `${selector} is not on the second row`);
+        }
+    });
+});
+
+test('the 作用域 toggles and "Select all" share one row', async () => {
+    await withPanelMounted({}, ({ document }) => {
+        const pack = packByName(document, 'daily');
+        const row = pack.querySelector('.st-emote-pack-controls');
+        assert.ok(row, 'the pack has no shared controls row');
+
+        // Both halves are direct children of the one row, so neither can claim a
+        // line of its own while the 表情 rows below fight over the space.
+        const scopes = pack.querySelector('.st-emote-scopes');
+        const selection = pack.querySelector('.st-emote-selection');
+        assert.equal(scopes.parentElement, row);
+        assert.equal(selection.parentElement, row);
+        assert.deepEqual([...row.children], [scopes, selection]);
+
+        assert.equal(scopes.querySelectorAll('input[type=checkbox]').length, 3);
+        assert.equal(selection.querySelector('input[type=checkbox]') !== null, true);
+        // And they are out of the pack header, which used to push the whole
+        // 作用域 row below the actions it belongs with.
+        assert.equal(row.closest('.st-emote-pack-header'), null);
+    });
+});
+
+test('every action button in the panel carries the one shared action-button class', async () => {
+    // Three areas build their own buttons — the pack header, a 表情 row and the
+    // debug area — and one hook class is what keeps them looking like the same
+    // kind of control. The stylesheet turns that class into the no-wrap rule, so a
+    // button added without it would wrap into a tall block again.
+    await withPanelMounted({}, ({ document }) => {
+        const buttons = [...document.querySelectorAll('#st_emote_drawer .menu_button')];
+        assert.ok(buttons.length > 0);
+        for (const button of buttons) {
+            assert.equal(
+                button.classList.contains('st-emote-button'),
+                true,
+                `"${button.textContent}" is an action button with no action-button class`,
+            );
+        }
+
+        // The style exists, and it beats the client's own `.menu_button`, which
+        // is a flex column — that is what turned a long label into a four-line
+        // block in the first place.
+        const rules = readStyleSheet();
+        assert.match(
+            rules['.menu_button.st-emote-button'] ?? '',
+            /white-space:\s*nowrap/,
+        );
+    });
+});
+
+test('every class the panel puts on an element is either styled or a declared query hook', async () => {
+    // A class no stylesheet knows about is a class the next change cannot find,
+    // and the failure shows up as an element quietly looking like the default one.
+    //
+    // **Two panel states, not one.** Several classes only exist in some states —
+    // `st-emote-pack-missing` needs the server to report none of our files,
+    // `st-emote-delete-selected` needs a ticked sticker, `st-emote-input-bad` needs
+    // a refused size value — so a single ordinary render would check a third of
+    // the surface and pass anyway. The two states below are chosen to reach all of
+    // them.
+    //
+    // "Styled" means the class appears in *some* selector, not that it heads one:
+    // `.menu_button.st-emote-button` and `.st-emote-actions .st-emote-delete-pack`
+    // are the two rules written that way on purpose — the first to outrank the
+    // client's own `.menu_button`, the second to separate one action from the rest
+    // of its group — and neither would a lookup by exact key find.
+    //
+    // QUERY_HOOKS is the deliberate exception: a class that appears in no selector
+    // at all, put there to be found by a test. Adding one is a decision to record,
+    // not an oversight.
+    const known = styledClasses();
+    const used = new Set();
+
+    await withPanelMounted({}, ({ document }) => {
+        collectClasses(document, used);
+    });
+    // The states the plain fixture never reaches.
+    await withPanelMounted({ storedFiles: [] }, ({ document }) => {
+        for (const tick of document.querySelectorAll('.st-emote-sticker-tick')) {
+            tick.checked = true;
+            tick.dispatchEvent(new globalThis.window.Event('change'));
+        }
+        const size = document.querySelector('.st-emote-size');
+        size.value = 'not a size';
+        size.dispatchEvent(new globalThis.window.Event('change'));
+        collectClasses(document, used);
+    });
+
+    const unknown = [...used]
+        .filter((name) => !known.has(name) && !QUERY_HOOKS.includes(name))
+        .sort();
+    assert.deepEqual(unknown, []);
+});
+
+/**
+ * Every `st-emote-*` class in force anywhere under the drawer.
+ *
+ * @param {Document} document
+ * @param {Set<string>} into
+ */
+function collectClasses(document, into) {
+    for (const element of document.querySelectorAll('#st_emote_drawer *')) {
+        for (const name of element.classList) {
+            if (name.startsWith('st-emote')) {
+                into.add(name);
+            }
+        }
+    }
+}
+
+test('every class the 尺寸 controls toggle is styled', async () => {
+    // The two state classes `showFieldHint` flips. They are the panel's only
+    // classes applied from outside a markup template, and neither appears on a
+    // mounted panel until a size value is refused — so nothing in the panel test
+    // would notice if one of them lost its rule and the invalid state went
+    // invisible exactly when it mattered.
+    const known = styledClasses();
+    for (const name of ['st-emote-hint-bad', 'st-emote-input-bad']) {
+        assert.ok(known.has(name), `${name} has no rule`);
+    }
+});
+
+/**
+ * Classes that carry no identity of their own, so the control surface leaves them
+ * out. A hook applied to *every* action button says nothing about which controls
+ * exist, and recording it would mean the snapshot fails on every styling pass
+ * while still not noticing one control appearing or disappearing. Their being
+ * styled at all is the subject of their own test.
+ */
+const PRESENTATION_HOOKS = ['st-emote-button'];
+
+/**
+ * Classes the panel applies to be *found* rather than to be styled: the
+ * per-action query hooks a test clicks (`.st-emote-export`), `st-emote-badge-empty`
+ * (the one state with nothing extra to say, so it needs no colour of its own), and
+ * the container class that carries an id and no appearance.
+ *
+ * Every other `st-emote-*` class the panel applies must have a rule, which is what
+ * the test above enforces — over two panel states, so the conditional ones count.
+ */
+const QUERY_HOOKS = [
+    'st-emote-add-url',
+    'st-emote-badge-empty',
+    'st-emote-delete-selected',
+    'st-emote-export',
+    'st-emote-packs',
+    'st-emote-replace',
+    'st-emote-sticker-delete',
+    'st-emote-upload',
+];
+
+/**
+ * The panel's control surface, one line per control: `where :: what it is what
+ * it says`.
+ *
+ * Read it as the answer to "what can a user do on this panel". The `where` half
+ * is what makes it a layout snapshot rather than a bag of strings — two 尺寸集
+ * with the same seven fields are told apart by which set they are in, two
+ * buttons that both say "Delete" are told apart by the 表情 they act on.
+ */
+const EXPECTED_CONTROL_SURFACE = [
+    'debug area :: div#st_emote_preview_run.menu_button "Render"',
+    'debug area :: div#st_emote_rerender.menu_button "Re-render the current chat"',
+    'debug area :: textarea#st_emote_preview.text_pole "Paste a message, e.g. She smiles. [[sticker:daily:happy]]"',
+    'pack "blank" / header :: div.menu_button.st-emote-add-url "Add image URL"',
+    'pack "blank" / header :: div.menu_button.st-emote-delete-pack "Delete pack"',
+    'pack "blank" / header :: div.menu_button.st-emote-export "Export .zip"',
+    'pack "blank" / header :: div.menu_button.st-emote-upload "Upload images"',
+    'pack "blank" / header :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
+    'pack "blank" / header :: input[text].st-emote-pack-name.text_pole "blank"',
+    'pack "blank" / selection bar :: input[checkbox] "Select all"',
+    'pack "blank" / 作用域 :: input[checkbox] "Character"',
+    'pack "blank" / 作用域 :: input[checkbox] "Chat"',
+    'pack "blank" / 作用域 :: input[checkbox] "Global"',
+    'pack "daily" / header :: div.menu_button.st-emote-add-url "Add image URL"',
+    'pack "daily" / header :: div.menu_button.st-emote-delete-pack "Delete pack"',
+    'pack "daily" / header :: div.menu_button.st-emote-export "Export .zip"',
+    'pack "daily" / header :: div.menu_button.st-emote-upload "Upload images"',
+    'pack "daily" / header :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
+    'pack "daily" / header :: input[text].st-emote-pack-name.text_pole "daily"',
+    'pack "daily" / selection bar :: input[checkbox] "Select all"',
+    'pack "daily" / sticker "happy" :: div.menu_button.st-emote-replace "Replace"',
+    'pack "daily" / sticker "happy" :: div.menu_button.st-emote-sticker-delete "Delete"',
+    'pack "daily" / sticker "happy" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
+    'pack "daily" / sticker "happy" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
+    'pack "daily" / sticker "happy" :: input[text].st-emote-description.text_pole "—"',
+    'pack "daily" / sticker "happy" :: input[text].st-emote-label.text_pole "Label"',
+    'pack "daily" / sticker "happy" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
+    'pack "daily" / sticker "sad" :: div.menu_button.st-emote-replace "Replace"',
+    'pack "daily" / sticker "sad" :: div.menu_button.st-emote-sticker-delete "Delete"',
+    'pack "daily" / sticker "sad" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
+    'pack "daily" / sticker "sad" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
+    'pack "daily" / sticker "sad" :: input[text].st-emote-description.text_pole "—"',
+    'pack "daily" / sticker "sad" :: input[text].st-emote-label.text_pole "Label"',
+    'pack "daily" / sticker "sad" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
+    'pack "daily" / sticker "wave" :: div.menu_button.st-emote-replace "Replace"',
+    'pack "daily" / sticker "wave" :: div.menu_button.st-emote-sticker-delete "Delete"',
+    'pack "daily" / sticker "wave" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
+    'pack "daily" / sticker "wave" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
+    'pack "daily" / sticker "wave" :: input[text].st-emote-description.text_pole "—"',
+    'pack "daily" / sticker "wave" :: input[text].st-emote-label.text_pole "Label"',
+    'pack "daily" / sticker "wave" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
+    'pack "daily" / 作用域 :: input[checkbox] "Character"',
+    'pack "daily" / 作用域 :: input[checkbox] "Chat"',
+    'pack "daily" / 作用域 :: input[checkbox] "Global"',
+    'pack "zeta" / header :: div.menu_button.st-emote-add-url "Add image URL"',
+    'pack "zeta" / header :: div.menu_button.st-emote-delete-pack "Delete pack"',
+    'pack "zeta" / header :: div.menu_button.st-emote-export "Export .zip"',
+    'pack "zeta" / header :: div.menu_button.st-emote-upload "Upload images"',
+    'pack "zeta" / header :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
+    'pack "zeta" / header :: input[text].st-emote-pack-name.text_pole "zeta"',
+    'pack "zeta" / selection bar :: input[checkbox] "Select all"',
+    'pack "zeta" / sticker "zappy" :: div.menu_button.st-emote-replace "Replace"',
+    'pack "zeta" / sticker "zappy" :: div.menu_button.st-emote-sticker-delete "Delete"',
+    'pack "zeta" / sticker "zappy" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
+    'pack "zeta" / sticker "zappy" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
+    'pack "zeta" / sticker "zappy" :: input[text].st-emote-description.text_pole "—"',
+    'pack "zeta" / sticker "zappy" :: input[text].st-emote-label.text_pole "Label"',
+    'pack "zeta" / sticker "zappy" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
+    'pack "zeta" / 作用域 :: input[checkbox] "Character"',
+    'pack "zeta" / 作用域 :: input[checkbox] "Chat"',
+    'pack "zeta" / 作用域 :: input[checkbox] "Global"',
+    'settings :: div#st_emote_copy_regex.menu_button "Copy regex JSON"',
+    'settings :: div#st_emote_create_pack.menu_button "Create pack"',
+    'settings :: div#st_emote_import_pack.menu_button "Import pack (.zip)"',
+    'settings :: input[checkbox]#st_emote_bracket_form "Bracket form: [[sticker:pack:label]]"',
+    'settings :: input[checkbox]#st_emote_enabled "Render stickers at all"',
+    'settings :: input[checkbox]#st_emote_render_user "Render stickers in user messages"',
+    'settings :: input[checkbox]#st_emote_tag_form "HTML tag form: the tag name below, wrapping pack:label"',
+    'settings :: input[file][.zip,application/zip single] (no caption)',
+    'settings :: input[text]#st_emote_new_pack.text_pole "New pack name"',
+    'settings :: input[text]#st_emote_search.text_pole "Search labels and descriptions"',
+    'settings :: input[text]#st_emote_tag_name.text_pole "HTML tag form:"',
+    'settings :: select#st_emote_placement.text_pole[in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Gap between stickers (left/right)"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Gap between stickers (top/bottom)"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Max height"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Max width"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Min height"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Min width"',
+    '尺寸集 "Block size (after the block / end of message)" :: select.st-emote-size.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Gap between stickers (left/right)"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Gap between stickers (top/bottom)"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Max height"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Max width"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Min height"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Min width"',
+    '尺寸集 "Inline size (in place)" :: select.st-emote-size.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
+];
+
+/**
+ * Where in the panel a control sits, named by the thing it belongs to rather
+ * than by its position in the tree — so a reflow that moves a control from one
+ * row to another is visible in the surface but a reflow that only nests it
+ * deeper is not mistaken for a change.
+ *
+ * @param {Element} element
+ * @returns {string}
+ */
+function controlRegion(element) {
+    const pack = element.closest('.st-emote-pack');
+    if (pack) {
+        const name = pack.querySelector('.st-emote-pack-name')?.value ?? '?';
+        const row = element.closest('.st-emote-sticker');
+        if (row) {
+            const label = row.querySelector('.st-emote-label')?.value;
+            return label === undefined
+                ? `pack "${name}" / sticker with no label input`
+                : `pack "${name}" / sticker "${label}"`;
+        }
+        if (element.closest('.st-emote-scopes')) {
+            return `pack "${name}" / 作用域`;
+        }
+        if (element.closest('.st-emote-selection')) {
+            return `pack "${name}" / selection bar`;
+        }
+        return `pack "${name}" / header`;
+    }
+    const sizeSet = element.closest('.st-emote-size-set');
+    if (sizeSet) {
+        return `尺寸集 "${sizeSet.querySelector('.st-emote-size-set-title').textContent}"`;
+    }
+    if (element.closest('.st-emote-debug')) {
+        return 'debug area';
+    }
+    return 'settings';
+}
+
+/**
+ * What a control says. The order is the panel's own: a caption the author wrote
+ * next to it, then the tooltip, then the placeholder, then — for a field with
+ * nothing else — its current value. The hidden file pickers say nothing at all;
+ * their caption is the button that opens them.
+ *
+ * @param {Element} element
+ * @returns {string}
+ */
+function controlCaption(element) {
+    if (element.classList.contains('menu_button')) {
+        return `"${element.textContent}"`;
+    }
+    const label = element.closest('label');
+    if (label) {
+        const span = label.querySelector(':scope > span');
+        if (span) {
+            return `"${span.textContent.trim()}"`;
+        }
+        // A 作用域 toggle wraps its name in a bare text node rather than a span.
+        const text = [...label.childNodes]
+            .filter((node) => node.nodeType === 3)
+            .map((node) => node.textContent)
+            .join('')
+            .trim();
+        if (text !== '') {
+            return `"${text}"`;
+        }
+    }
+    for (const attribute of ['title', 'placeholder']) {
+        const value = element.getAttribute(attribute);
+        if (value) {
+            return `"${value}"`;
+        }
+    }
+    return element.value === '' ? '(no caption)' : `"${element.value}"`;
+}
+
+/**
+ * The facts a caption cannot carry: what a file picker accepts, and what a select
+ * offers. A renamed or dropped option changes the panel's behaviour without
+ * changing a single word of its text, so it belongs in the surface.
+ *
+ * @param {Element} element
+ * @returns {string}
+ */
+function controlDetails(element) {
+    if (element.getAttribute('type') === 'file') {
+        const flags = [element.accept, element.multiple ? 'multiple' : 'single']
+            .filter(Boolean)
+            .join(' ');
+        return `[${flags}]`;
+    }
+    if (element.tagName === 'SELECT') {
+        const options = [...element.options]
+            .map((option) => `${option.value}="${option.textContent}"`)
+            .join(' | ');
+        return `[${options}]`;
+    }
+    return '';
+}
+
+/**
+ * The whole panel's control surface as sorted lines. Every element a user can
+ * operate is in: inputs, selects, the debug box, and the client's `.menu_button`
+ * which is a `<div>` this extension paints rather than a real `<button>`.
+ *
+ * @param {Document} document
+ * @returns {string[]}
+ */
+function controlSurface(document) {
+    return [...document.querySelectorAll(
+        '#st_emote_drawer input, #st_emote_drawer select, #st_emote_drawer textarea, #st_emote_drawer .menu_button',
+    )].map((element) => {
+        const type = element.getAttribute('type') ?? '';
+        const classes = [...element.classList]
+            .filter((name) => !PRESENTATION_HOOKS.includes(name))
+            .sort();
+        const head = `${element.tagName.toLowerCase()}`
+            + `${type === '' ? '' : `[${type}]`}`
+            + `${element.id === '' ? '' : `#${element.id}`}`
+            + `${classes.length === 0 ? '' : `.${classes.join('.')}`}`;
+        return `${controlRegion(element)} :: ${head}${controlDetails(element)} ${controlCaption(element)}`;
+    }).sort();
+}
+
+/**
+ * Every class name `style.css` mentions anywhere in a selector, from a rule that
+ * is a bare `.name`, one of several in a list, or a descendant of something else.
+ *
+ * @returns {Set<string>}
+ */
+function styledClasses() {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    const names = new Set();
+    for (const match of css.matchAll(/\.([A-Za-z][\w-]*)/g)) {
+        names.add(match[1]);
+    }
+    return names;
+}
+
+/**
+ * `style.css` as a selector → declarations map, so a test can ask "is there a rule
+ * for this" without a browser. Comments are dropped, since a class named inside
+ * one is a note rather than a rule.
+ *
+ * Each selector in a comma-separated list gets its own entry, because
+ * `.st-emote-placement, .st-emote-sizes` styles two classes and a lookup for
+ * either of them has to find it.
+ *
+ * @returns {Record<string, string>}
+ */
+function readStyleSheet() {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = {};
+    for (const block of css.split('}')) {
+        const open = block.indexOf('{');
+        if (open === -1) {
+            continue;
+        }
+        const declarations = block.slice(open + 1);
+        for (const selector of block.slice(0, open).split(',')) {
+            rules[selector.trim()] = declarations;
+        }
+    }
+    return rules;
+}
 
 /**
  * Every word the panel paints, as one string. The panel is the only place a
