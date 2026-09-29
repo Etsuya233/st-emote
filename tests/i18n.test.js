@@ -170,13 +170,14 @@ test('the catalog carries no value nobody can reach', () => {
     // can see happening. The list is the set of keys the code actually looks up;
     // a key added to a catalog has to be added here too, or this fails.
     const used = new Set([
-        'panel.intro', 'panel.introTokenCaption', 'panel.tokenExample',
+        'panel.intro', 'panel.introTokenCaption', 'panel.tokenExample', 'panel.iconHint',
         'panel.renderUser', 'panel.enabled', 'panel.enabledHint', 'form.label',
         'form.bracket', 'form.tag', 'form.bothOff',
         'panel.tagName', 'panel.sizeHint', 'panel.newPackName',
         'panel.createPack', 'panel.missingPackHeader', 'panel.createMissingPacks',
         'panel.missingPacksCreated', 'panel.noPacks', 'panel.noStickerMatches',
         'panel.searchPlaceholder', 'panel.importPack', 'panel.transferHint',
+        'panel.macroTitle', 'panel.regexTitle', 'panel.transferTitle', 'panel.debugTitle',
         'panel.macroHint', 'panel.macroExample', 'panel.regexHint', 'panel.copyRegex',
         'panel.regexCopied', 'panel.regexCopyFailed', 'panel.debugHint',
         'panel.previewPlaceholder', 'panel.previewRun', 'panel.previewEmpty',
@@ -195,7 +196,7 @@ test('the catalog carries no value nobody can reach', () => {
         'placement.follow', 'placement.override', 'placement.label',
         'size.inline', 'size.block', 'size.minWidth', 'size.minHeight', 'size.maxWidth',
         'size.maxHeight', 'size.fit', 'size.fitDefault', 'size.marginX', 'size.marginY',
-        'size.invalidHint',
+        'size.invalidHint', 'size.customized', 'size.openedBecauseInvalid',
         'constraint.packName', 'constraint.label', 'constraint.description',
         'constraint.htmlTag', 'constraint.reason.empty', 'constraint.reason.too-long',
         'constraint.reason.forbidden-character', 'constraint.reason.newline',
