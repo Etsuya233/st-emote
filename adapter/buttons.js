@@ -18,6 +18,11 @@
  * longer exists) and every glyph on the panel comes from this table (a class
  * typed inline somewhere else is a name nobody checked).
  *
+ * **Marks are a second, smaller table.** `MARK_ICONS` holds the glyphs a grid
+ * cell *wears* rather than sits on a button. It is kept apart for the reason its
+ * own note gives: the orphan half of the test below asks of every `ACTION_ICONS`
+ * entry that some button draws it, which a corner mark never is.
+ *
  * The names below were read out of the Font Awesome Free stylesheet the client
  * ships (`public/css/fontawesome.min.css`, 6.5.2), not from memory.
  */
@@ -47,9 +52,31 @@ export const ACTION_ICONS = {
     exportZip: 'fa-solid fa-file-zipper',
     deletePack: 'fa-solid fa-trash-can',
     deleteSelected: 'fa-solid fa-trash-arrow-up',
+    // One glyph for both directions of the batch switch: a toggle button's state
+    // is `aria-pressed` and its highlighted styling, not a different picture.
+    batchMode: 'fa-solid fa-square-check',
+    // ── the editor a grid cell opens ────────────────────────────────────────
+    closeEditor: 'fa-solid fa-xmark',
     // ── one 表情 in a pack ──────────────────────────────────────────────────
     replaceImage: 'fa-solid fa-file-image',
     deleteSticker: 'fa-solid fa-trash',
+};
+
+/**
+ * The glyphs a grid cell *wears* rather than sits on a button.
+ *
+ * **A separate table because `ACTION_ICONS` is a table of button actions**, and
+ * the orphan-key test asks of every entry there that some *button* draws it. A
+ * corner mark is not a button, so putting one in there would fail that test over
+ * a name that is perfectly in use. The name is still checked against the
+ * recorded font — by the test that walks the whole drawer for FA classes rather
+ * than by the button table.
+ */
+export const MARK_ICONS = {
+    // A 外链 sticker: the one fact about a cell that is not its 标签.
+    external: 'fa-solid fa-link',
+    // A ticked cell in 批量 mode.
+    picked: 'fa-solid fa-check',
 };
 
 /**
@@ -69,6 +96,24 @@ function actionIcon(icon) {
     // against this table, and a name Font Awesome has never heard of is exactly
     // the failure this module exists to prevent.
     glyph.className = `${ACTION_ICONS[icon]} st-emote-icon`;
+    glyph.setAttribute('aria-hidden', 'true');
+    return glyph;
+}
+
+/**
+ * A glyph worn by an element that is not a button — the corner mark on a grid
+ * cell that says the image comes from a URL.
+ *
+ * The same shape `actionIcon` builds, from the other table, and for the same
+ * reason `aria-hidden`: the sentence about the mark is on the cell that wears
+ * it, so a screen reader reading the glyph's own name would say it twice.
+ *
+ * @param {string} icon - A key of `MARK_ICONS`.
+ * @returns {HTMLElement}
+ */
+export function markIcon(icon) {
+    const glyph = document.createElement('i');
+    glyph.className = `${MARK_ICONS[icon]} st-emote-mark`;
     glyph.setAttribute('aria-hidden', 'true');
     return glyph;
 }

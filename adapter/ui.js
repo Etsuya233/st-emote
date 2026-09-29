@@ -7,6 +7,14 @@
  * live in `core/`. What is here is the DOM, the file dialogs and the calls into
  * SillyTavern's endpoints.
  *
+ * **The pack list is a grid, and that is the whole shape of it.** A 表情 is a
+ * square with its 标签 under it and nothing else — no tick, no fields, no
+ * buttons. Everything a user does to one sticker happens in the editor
+ * (`adapter/sticker-editor.js`), which is a layer over this panel rather than a
+ * row in it, and every 批量 operation happens in the batch mode one pack's header
+ * switches on. Both of those used to be on screen all the time, which is why a
+ * pack of ten stickers was sixty controls and twenty rows.
+ *
  * **Every sentence on screen comes from `core/i18n.js`.** There is no English
  * literal left in this file to translate later: the reason a half-finished
  * panel is embarrassing is that it is invisible until a user opens it, and the
@@ -21,14 +29,7 @@
  * here: a value that never reaches `innerHTML` cannot need escaping.
  */
 
-import {
-    findPackByName,
-    findStickerByLabel,
-    validateDescription,
-    validateLabel,
-    validatePackName,
-    validateStickerTag,
-} from '../core/constraints.js';
+import { findPackByName, validateStickerTag } from '../core/constraints.js';
 import { addImportedPack, removePack, removeStickers, replaceStickerImage } from '../core/catalogue.js';
 import { findConflicts } from '../core/conflict.js';
 import { renamePackInScope, scopeHasPack, setPackInScope } from '../core/effective-set.js';
@@ -37,7 +38,6 @@ import {
     isStickerImageMissing,
     packCoverImage,
     packState,
-    renameBreaksTokens,
     searchLibrary,
     sortPacks,
 } from '../core/library.js';
@@ -52,17 +52,18 @@ import { t } from '../core/i18n.js';
 import { normalizeLabel } from '../core/normalize.js';
 import { importFailureMessage, planImport } from '../core/manifest.js';
 import { buildPackArchive, downloadBlob, readPackArchive } from './archive.js';
-import { filePickerButton, iconButton, iconize } from './buttons.js';
+import { filePickerButton, iconButton, iconize, markIcon } from './buttons.js';
 import { collapseBlock } from './collapsible.js';
 import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
+import { checkPackName, constraintMessage } from './field-checks.js';
 import { useClientLocale } from './locale.js';
 import { logError } from './log.js';
 import { effectiveSetForMessage } from './render-common.js';
 import { setEnabled } from './render-path.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
 import { clearContextRegexJson } from './regex.js';
-import { buildStickerPlacementSelect, mountSizingSection } from './sizing-panel.js';
+import { mountSizingSection } from './sizing-panel.js';
 import {
     collectCharacterPackNames,
     getChatScope,
@@ -81,6 +82,7 @@ import {
     renamePack,
     setPackEnabled,
 } from './settings.js';
+import { closeStickerEditor, openStickerEditor } from './sticker-editor.js';
 import {
     deleteStickerImage,
     imageFileChecker,
@@ -103,68 +105,33 @@ const ACCEPTED_MIME = acceptedImageTypes();
 let storedImageFiles = null;
 
 /**
- * Sticker ids the user has ticked for a batch delete, across re-renders. Module
- * state on purpose: the pack list is rebuilt from scratch on every change, and a
- * selection that reset itself on the first re-render would be unusable.
+ * The panel's own state that has to outlive a repaint: which stickers the user
+ * has ticked, which pack is open, and which pack is in 批量 mode.
+ *
+ * **Module state on purpose, all three.** `renderPackList` rebuilds the pack
+ * list from scratch on every change, so anything held on an element is gone by
+ * the next keystroke's repaint. A selection that reset itself on the first
+ * re-render would be unusable, and an accordion or a batch mode that snapped
+ * shut on every tick would be worse than not existing.
+ *
+ * **They do not outlive a *mount*** — `mountSettingsPanel` clears all three,
+ * because a mount is a page load as far as the client is concerned. A test that
+ * mounted the panel and found a cell already ticked from an earlier test would
+ * be reading a state no user has ever been in.
+ *
+ * `openPackName` and `batchPackName` are names rather than elements for a second
+ * reason: a rename changes a pack's name, and a state holding the old one would
+ * leave the panel stuck.
  *
  * @type {Set<string>}
  */
 const selectedStickerIds = new Set();
 
-/**
- * The sentence for a refused field, with the field named and the reason given.
- *
- * The reason keys are the same ones `core/constraints.js` produces, so a new rule
- * cannot be added there and left without a sentence here.
- *
- * @param {any} context
- * @param {'packName'|'label'|'description'|'htmlTag'} field
- * @param {string} reason
- * @returns {string}
- */
-function constraintMessage(context, field, reason) {
-    return `${t(`constraint.${field}`)} ${t(`constraint.reason.${reason}`)}.`;
-}
+/** @type {string|null} */
+let openPackName = null;
 
-/**
- * Validate a new pack name and its app-wide uniqueness.
- *
- * @param {any} context
- * @param {import('./settings.js').Settings} settings
- * @param {unknown} value
- * @param {object} [except]
- * @returns {{ok: true, value: string} | {ok: false, message: string}}
- */
-function checkPackName(context, settings, value, except) {
-    const result = validatePackName(value);
-    if (!result.ok) {
-        return { ok: false, message: constraintMessage(context, 'packName', result.reason) };
-    }
-    if (findPackByName(settings.packs, result.value, { except })) {
-        return { ok: false, message: t('pack.nameTaken', { name: result.value }) };
-    }
-    return { ok: true, value: result.value };
-}
-
-/**
- * Validate a label and its uniqueness inside one pack.
- *
- * @param {any} context
- * @param {import('./settings.js').PackRecord} pack
- * @param {unknown} value
- * @param {object} [except]
- * @returns {{ok: true, value: string} | {ok: false, message: string}}
- */
-function checkLabel(context, pack, value, except) {
-    const result = validateLabel(value);
-    if (!result.ok) {
-        return { ok: false, message: constraintMessage(context, 'label', result.reason) };
-    }
-    if (findStickerByLabel(pack.stickers, result.value, { except })) {
-        return { ok: false, message: t('sticker.labelTaken', { name: result.value }) };
-    }
-    return { ok: true, value: result.value };
-}
+/** @type {string|null} */
+let batchPackName = null;
 
 /**
  * @param {any} context
@@ -173,6 +140,7 @@ function saveAndRefresh(context) {
     context.saveSettingsDebounced();
     rerenderChat(context);
 }
+
 
 /**
  * @param {any} context
@@ -481,6 +449,16 @@ export function mountSettingsPanel(context) {
         return;
     }
 
+    // A panel that has just been mounted has nothing open, is not in 批量 mode,
+    // and has nothing ticked. All three survive every *repaint* — which is
+    // exactly what makes them usable — and all three are cleared here, in the one
+    // place that decides what "just mounted" means. A mount is a page load as far
+    // as the client is concerned (it reloads on a language change), so a tick
+    // surviving one would be a tick from the last session.
+    openPackName = null;
+    batchPackName = null;
+    selectedStickerIds.clear();
+
     const root = document.createElement('div');
     root.id = 'st_emote_drawer';
     root.className = 'inline-drawer';
@@ -592,7 +570,7 @@ export function mountSettingsPanel(context) {
     tagInput.addEventListener('change', () => {
         const result = validateStickerTag(tagInput.value);
         if (!result.ok) {
-            toast('warning', constraintMessage(context, 'htmlTag', result.reason));
+            toast('warning', constraintMessage('htmlTag', result.reason));
             tagInput.value = ensureSettings(context).stickerTag;
             return;
         }
@@ -647,7 +625,7 @@ export function mountSettingsPanel(context) {
     const createButton = root.querySelector('#st_emote_create_pack');
     createButton.addEventListener('click', () => {
         const current = ensureSettings(context);
-        const check = checkPackName(context, current, nameInput.value);
+        const check = checkPackName(current, nameInput.value);
         if (!check.ok) {
             toast('warning', check.message);
             return;
@@ -655,6 +633,9 @@ export function mountSettingsPanel(context) {
         createPack(current, check.value);
         context.saveSettingsDebounced();
         nameInput.value = '';
+        // A brand new pack is empty, and an empty grid is a thing to look at
+        // rather than a thing to read about — so it opens.
+        openPackName = check.value;
         refresh();
         revealPack(check.value);
     });
@@ -680,9 +661,9 @@ export function mountSettingsPanel(context) {
  *
  * The list is sorted by name, so a new pack lands wherever its name sorts
  * rather than at the end where it was just added — which is how "I pressed the
- * button and nothing happened" happens. Scrolling it into view and focusing its
- * name input is the whole fix, and it is the difference between the create row
- * being the panel's first action and being the panel's most puzzling one.
+ * button and nothing happened" happens. **Opening it is half the fix**: the grid
+ * of a pack is below its header now, so scrolling to a closed row would land the
+ * user in front of a line that has nothing on it.
  *
  * Matched on the rendered field rather than on the record, because that is the
  * only handle the DOM has: the list is rebuilt from scratch on every change and
@@ -695,15 +676,63 @@ export function mountSettingsPanel(context) {
  * @param {string} name - The pack's name, as the catalogue now spells it.
  */
 function revealPack(name) {
-    const row = [...document.querySelectorAll('#st_emote_packs .st-emote-pack')]
-        .find((pack) => pack.querySelector('.st-emote-pack-name')?.value === name);
+    const row = packRow(name);
     if (!row) {
         return;
     }
-    if (typeof row.scrollIntoView === 'function') {
-        row.scrollIntoView({ block: 'nearest' });
-    }
+    scrollIntoView(row);
     row.querySelector('.st-emote-pack-name')?.focus();
+}
+
+/**
+ * Put one freshly uploaded sticker in front of the user.
+ *
+ * The same failure as `revealPack`, one level down: a pack that was closed gets
+ * opened (its grid is below the header), and the cell is looked up by id rather
+ * than by 标签, because an uploaded sticker has no label yet — which is the
+ * normal state of the first ten uploads a user makes.
+ *
+ * @param {string} packName - The pack it landed in.
+ * @param {string} stickerId
+ */
+function revealSticker(packName, stickerId) {
+    openPackName = packName;
+    const cell = cellById(packName, stickerId);
+    if (!cell) {
+        return;
+    }
+    scrollIntoView(cell);
+}
+
+/**
+ * @param {string} name
+ * @returns {Element|null}
+ */
+function packRow(name) {
+    return [...document.querySelectorAll('#st_emote_packs .st-emote-pack')]
+        .find((pack) => pack.querySelector('.st-emote-pack-name')?.value === name) ?? null;
+}
+
+/**
+ * @param {string} packName
+ * @param {string} stickerId
+ * @returns {Element|null}
+ */
+function cellById(packName, stickerId) {
+    // Read off `dataset` rather than built into a selector: an id from a
+    // hand-edited settings file can hold anything, and a selector built from one
+    // is a query that throws instead of a query that finds nothing.
+    return [...(packRow(packName)?.querySelectorAll('.st-emote-cell') ?? [])]
+        .find((cell) => cell.dataset.stickerId === stickerId) ?? null;
+}
+
+/**
+ * @param {Element} element
+ */
+function scrollIntoView(element) {
+    if (typeof element.scrollIntoView === 'function') {
+        element.scrollIntoView({ block: 'nearest' });
+    }
 }
 
 /**
@@ -786,8 +815,15 @@ function renderPackList(context, packContainer, missingContainer, refresh) {
         return;
     }
 
-    for (const { pack, stickers } of entries) {
-        packContainer.append(buildPackElement(context, pack, stickers, refresh, query !== ''));
+    for (const [position, { pack, stickers }] of entries.entries()) {
+        packContainer.append(buildPackElement(
+            context,
+            pack,
+            stickers,
+            refresh,
+            query !== '',
+            position,
+        ));
     }
 }
 
@@ -839,12 +875,25 @@ function renderMissingPacks(context, settings, container, refresh) {
 }
 
 /**
- * One pack in the list.
+ * One pack in the list: a header that opens and closes, and a grid of its
+ * stickers underneath.
  *
  * `pack` and `visible` are deliberately two arguments: `pack` is the record the
  * settings hold and every button edits, `visible` is only what a search chose to
  * show. Handing the same filtered object to both would mean a rename during a
  * search edits a record nothing else can see.
+ *
+ * **The header is one row that opens and closes the pack, and nothing else on
+ * screen is always there.** Whatever the state, the whole of a collapsed pack is
+ * one line: cover, 包名, count, any state badge, and a chevron. The actions, the
+ * 作用域 toggles and the grid live inside the body, so a library of forty packs
+ * costs forty lines rather than forty times six rows.
+ *
+ * **It is not the client's `inline-drawer`, on purpose.** That widget's toggle is
+ * a header of one sentence, and the client delegates a click on it from
+ * `document` — a header holding a text input and a row of buttons would slide
+ * open on every click on the input too. `collapsibleSection` stays where it
+ * belongs: the settings' explanation sections, which are exactly that shape.
  *
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
@@ -852,9 +901,10 @@ function renderMissingPacks(context, settings, container, refresh) {
  * @param {() => void} refresh
  * @param {boolean} [searching] - True while a search is narrowing the list, which
  *   hides the buttons that would act on stickers the user cannot see.
+ * @param {number} [position] - Where this pack sorts, for the body's element id.
  * @returns {Element}
  */
-function buildPackElement(context, pack, visible, refresh, searching = false) {
+function buildPackElement(context, pack, visible, refresh, searching = false, position = 0) {
     const wrapper = document.createElement('div');
     wrapper.className = 'st-emote-pack';
     const state = packState(pack, imageFileChecker(storedImageFiles));
@@ -862,33 +912,119 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
         wrapper.classList.add('st-emote-pack-missing');
     }
 
-    const header = document.createElement('div');
-    header.className = 'st-emote-pack-header';
+    const open = openPackName === pack.name;
+    // 批量 mode belongs to a pack, not to the panel: the batch delete it drives
+    // reads one pack's stickers, and a "12 selected" that spans four packs is a
+    // number nobody can act on confidently.
+    const batching = batchPackName === pack.name;
 
-    header.append(buildPackCover(context, pack, state, refresh));
-    header.append(buildPackNameInput(context, pack, refresh));
+    const toggle = document.createElement('div');
+    toggle.className = 'st-emote-pack-toggle';
+    toggle.setAttribute('role', 'button');
+    // The keyboard path to the grid: without a tab stop the accordion is mouse
+    // -only, and `aria-expanded` would be describing a control nothing else can
+    // reach.
+    toggle.setAttribute('tabindex', '0');
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-controls', `st_emote_pack_body_${position}`);
+    toggle.title = open ? t('pack.collapse') : t('pack.expand');
+
+    toggle.append(buildPackCover(context, pack, state, refresh));
+    toggle.append(buildPackNameInput(context, pack, refresh));
 
     const count = document.createElement('span');
     count.className = 'st-emote-pack-count';
     count.textContent = t('pack.stickerCount', { count: pack.stickers.length });
-    header.append(count);
+    toggle.append(count);
 
     const stateKey = PACK_STATE_LABEL_KEYS[state];
     if (stateKey) {
         // The class stays `st-emote-badge-<state>`: the stylesheet reads it to
         // colour the two states differently, so it is a hook rather than a label.
-        header.append(badge(
+        toggle.append(badge(
             t(stateKey),
             `st-emote-badge-${state}`,
             t(`${stateKey}Title`),
         ));
     }
 
-    // The pack's own actions, in one wrapping group. The group wrapping is the
-    // point: a button that cannot fit moves to the next line as a whole, while
-    // its label stays on one line inside it. Deleting the pack is set apart from
-    // the three reversible ones, because it is the only one of the four the panel
-    // cannot take back.
+    // The chevron is the client's own glyph and the direction is on the toggle's
+    // `aria-expanded`; the mark itself says nothing a screen reader should read.
+    const chevron = markIcon(open ? 'collapse' : 'expand');
+    chevron.classList.add('st-emote-pack-chevron');
+    toggle.append(chevron);
+
+    // The header's own children that are controls — the 包名 input and the cover
+    // in its "re-point the images" state — say so here, because a click that lands
+    // on one of them is a click on *that*, not on the accordion. The pack's action
+    // buttons are in the body rather than the header, which is why they are not
+    // in this list.
+    toggle.addEventListener('click', (event) => {
+        if (event.target.closest('input, img')) {
+            return;
+        }
+        setOpenPack(pack.name);
+        refresh();
+    });
+    toggle.addEventListener('keydown', (event) => {
+        // Enter and Space are what a `role=button` answers to, and the target
+        // check is what keeps Enter in the 包名 field from opening the pack.
+        if (event.target !== toggle || (event.key !== 'Enter' && event.key !== ' ')) {
+            return;
+        }
+        event.preventDefault();
+        setOpenPack(pack.name);
+        refresh();
+    });
+    wrapper.append(toggle);
+
+    const body = document.createElement('div');
+    body.className = 'st-emote-pack-body';
+    body.id = `st_emote_pack_body_${position}`;
+    body.hidden = !open;
+
+    if (open) {
+        body.append(buildPackActions(context, pack, refresh, searching, batching));
+        // The 作用域 toggles share a row with the batch bar: they are both about
+        // which stickers are in play, and in a 300px column either can claim the
+        // width the grid below actually needs.
+        const controls = document.createElement('div');
+        controls.className = 'st-emote-pack-controls';
+        controls.append(buildScopeToggles(context, pack));
+        if (batching) {
+            controls.append(buildSelectionBar(context, pack, visible, refresh, searching));
+        }
+        body.append(controls);
+
+        const grid = document.createElement('div');
+        grid.className = 'st-emote-stickers';
+        for (const sticker of visible) {
+            grid.append(buildStickerCell(context, pack, sticker, refresh, searching, batching));
+        }
+        body.append(grid);
+    }
+
+    wrapper.append(body);
+    return wrapper;
+}
+
+/**
+ * The pack's own actions, in one wrapping group. The group wrapping is the
+ * point: a button that cannot fit moves to the next line as a whole, while its
+ * label stays on one line inside it.
+ *
+ * Deleting the pack is set apart from the rest by a doubled gap rather than by a
+ * colour — it is the only one of them the panel cannot take back, and the two
+ * live side by side on the same row in a column the user controls the colour of.
+ *
+ * @param {any} context
+ * @param {import('./settings.js').PackRecord} pack
+ * @param {() => void} refresh
+ * @param {boolean} searching
+ * @param {boolean} batching
+ * @returns {Element}
+ */
+function buildPackActions(context, pack, refresh, searching, batching) {
     const actions = document.createElement('div');
     actions.className = 'st-emote-actions';
     actions.append(filePickerButton(
@@ -903,6 +1039,20 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
         await handleExternalUrl(context, pack, refresh);
     });
 
+    // 批量 is a mode, so it is a toggle: one glyph, `aria-pressed` for the state,
+    // and a sentence per direction so the tooltip says which way the click goes.
+    const batch = iconButton(
+        'batchMode',
+        batching ? t('pack.batchModeDone') : t('pack.batchMode'),
+        'st-emote-batch',
+    );
+    batch.setAttribute('aria-pressed', String(batching));
+    batch.addEventListener('click', () => {
+        setBatchPack(pack.name);
+        refresh();
+    });
+    actions.append(batch);
+
     if (!searching) {
         const exportButton = iconButton('exportZip', t('pack.exportZip'), 'st-emote-export');
         actions.append(exportButton);
@@ -916,28 +1066,38 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
         });
     }
 
-    header.append(actions);
-    wrapper.append(header);
+    return actions;
+}
 
-    // The 作用域 toggles and "Select all" share one row: they are both about
-    // which stickers are in play, and either can claim the width the sticker rows
-    // below actually need.
-    const controls = document.createElement('div');
-    controls.className = 'st-emote-pack-controls';
-    controls.append(
-        buildScopeToggles(context, pack),
-        buildSelectionBar(context, pack, visible, refresh, searching),
-    );
-    wrapper.append(controls);
+/**
+ * Open one pack and close the rest — or close it, if it is the open one.
+ *
+ * **One at a time, not one or none.** Two packs open at once is the state this
+ * panel spent its whole life in, and it is the reason the list was a wall: the
+ * eye has to be able to say "the pack I am working on is *this* row".
+ *
+ * @param {string} name
+ */
+function setOpenPack(name) {
+    openPackName = openPackName === name ? null : name;
+}
 
-    const list = document.createElement('div');
-    list.className = 'st-emote-stickers';
-    for (const sticker of visible) {
-        list.append(buildStickerElement(context, pack, sticker, refresh, searching));
+/**
+ * Enter or leave 批量 mode for one pack.
+ *
+ * **Entering it opens the pack.** Batch mode without a grid is a checkbox and a
+ * delete button acting on stickers that are not on screen, which is the one
+ * outcome worse than having no batch mode at all.
+ *
+ * @param {string} name
+ */
+function setBatchPack(name) {
+    if (batchPackName === name) {
+        batchPackName = null;
+        return;
     }
-    wrapper.append(list);
-
-    return wrapper;
+    batchPackName = name;
+    openPackName = name;
 }
 
 /**
@@ -948,7 +1108,7 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
  * @param {import('./settings.js').PackRecord} pack
  * @param {string} state
  * @param {() => void} refresh
- * @returns {Element}
+ * @returns {HTMLImageElement}
  */
 function buildPackCover(context, pack, state, refresh) {
     const cover = document.createElement('img');
@@ -992,11 +1152,19 @@ function buildPackNameInput(context, pack, refresh) {
     name.addEventListener('change', () => {
         const current = ensureSettings(context);
         const previousName = pack.name;
-        const check = checkPackName(context, current, name.value, pack);
+        const check = checkPackName(current, name.value, pack);
         if (!check.ok) {
             toast('warning', check.message);
             name.value = pack.name;
             return;
+        }
+        // The accordion and the batch mode are keyed on this name, so a rename
+        // that left them behind would close a pack the user is still inside.
+        if (openPackName === previousName) {
+            openPackName = check.value;
+        }
+        if (batchPackName === previousName) {
+            batchPackName = check.value;
         }
         renamePack(current, pack, check.value);
         const nextCharacterScope = renamePackInScope(
@@ -1016,6 +1184,10 @@ function buildPackNameInput(context, pack, refresh) {
 
 /**
  * The tick-everything box and the batch delete that acts on the ticks.
+ *
+ * **It exists only in 批量 mode.** The row used to be on screen for every pack at
+ * all times, which is how a once-a-month operation came to own a line of every
+ * pack's header.
  *
  * The ticks themselves live in `visible`, so "select all" during a search means
  * "everything the search is showing" — the two boxes always agree about what is
@@ -1103,9 +1275,9 @@ function selectedInPack(pack) {
  *
  * **Each of the three repaints the status line.** None of them rebuilds the
  * pack list — the checkbox keeps its own state, and a rebuild would throw away
- * the tick boxes a user is halfway through — yet each of them changes the
- * 生效集, which is what the status line is reporting. A read-out that only
- * followed a list repaint would go stale on exactly the action that matters.
+ * the ticks a user is halfway through — yet each of them changes the 生效集,
+ * which is what the status line is reporting. A read-out that only followed a
+ * list repaint would go stale on exactly the action that matters.
  *
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
@@ -1174,141 +1346,143 @@ function buildScopeToggle(label, checked, onChange, disabled = false) {
 }
 
 /**
- * One 表情, as two rows.
+ * One 表情, as one square.
  *
- * **First row**: the tick, the thumbnail, the 标签 and the row's badges. The 标签
- * is the 标识 — it is what a token names, so it has to be readable at a glance —
- * and the tick and the thumbnail are fixed-width, so none of them can be squeezed
- * by what follows. This row carries nothing else, which is what leaves the 标签
- * the whole width in a narrow panel.
+ * **This is the whole default surface of a sticker, and the reduction is the
+ * point.** It used to be two rows and six controls — a tick, the picture, the
+ * 标签, the 描述, the 投放方式 override, replace and delete — all of them on
+ * screen for every sticker in every pack. The 标签 stays, because it is the 标识
+ * and it is what a token names; the rest moved into the editor, which is one
+ * layer over the panel rather than a row in it.
  *
- * **Second row**: the 描述 across the width, then the 投放方式 override and the two
- * image actions. The 描述 is content rather than identity and is usually a full
- * sentence, so it is the field that needs width most; sharing one line with a
- * thumbnail, a tick and a select is what truncated it to "测试表情,详".
+ * **The badges became corner marks.** A 56px cell has no room for a word, so
+ * 外链 wears a link glyph and a sticker with no image wears the same dashed
+ * outline the panel has always used for one. `sticker.external` and
+ * `sticker.unlabeled` still exist as words — the editor is the one screen with
+ * room to say them.
  *
- * **The 投放方式 override is on the second row on purpose, not by accident.** It
- * is a per-sticker override almost nobody touches, so wedging it between the 标签
- * and the 描述 — which is where the one-line layout put it — costs the two fields
- * a user does type into, and puts a rarely-used select in the middle of the tab
- * order. Down here it sits with the actions it modifies, and the row's tab order
- * is **exactly what it was before the split**: 标签, 描述, 投放方式, Replace, Delete.
- * A reflow that silently reorders what Tab reaches is the kind of thing nobody
- * notices until it annoys them daily.
+ * **In 批量 mode the cell stops being a button and becomes a checkbox.** The
+ * same square, a different question asked of it, and no nested control: a tick
+ * inside a clickable cell is a cell where half the clicks do something the
+ * label did not promise.
  *
  * @param {any} context
  * @param {import('./settings.js').PackRecord} pack
  * @param {import('./settings.js').StickerRecord} sticker
  * @param {() => void} refresh
  * @param {boolean} searching
+ * @param {boolean} batching
  * @returns {Element}
  */
-function buildStickerElement(context, pack, sticker, refresh, searching) {
-    const row = document.createElement('div');
-    row.className = 'st-emote-sticker';
+function buildStickerCell(context, pack, sticker, refresh, searching, batching) {
+    const cell = document.createElement('div');
+    cell.className = 'st-emote-cell';
+    // The two facts a test (and `revealSticker`) needs to name a cell: its id is
+    // stable across a repaint and across a rename, and the 标签 is what the cell
+    // says out loud.
+    cell.dataset.stickerId = sticker.id;
+    cell.dataset.label = sticker.label;
 
-    const top = document.createElement('div');
-    top.className = 'st-emote-sticker-main';
-    row.append(top);
-
-    const tick = document.createElement('input');
-    tick.type = 'checkbox';
-    tick.className = 'st-emote-sticker-tick';
-    tick.title = t('sticker.selectForDelete');
-    tick.checked = selectedStickerIds.has(sticker.id);
-    tick.addEventListener('change', () => {
-        if (tick.checked) {
-            selectedStickerIds.add(sticker.id);
-        } else {
-            selectedStickerIds.delete(sticker.id);
-        }
-        refresh();
-    });
-    top.append(tick);
-
-    top.append(buildStickerThumb(sticker));
-
-    const labelInput = document.createElement('input');
-    labelInput.type = 'text';
-    labelInput.className = 'text_pole st-emote-label';
-    labelInput.placeholder = t('sticker.labelPlaceholder');
-    labelInput.value = sticker.label;
-    labelInput.addEventListener('change', () => {
-        const previousLabel = sticker.label;
-        const check = checkLabel(context, pack, labelInput.value, sticker);
-        if (!check.ok) {
-            toast('warning', check.message);
-            labelInput.value = sticker.label;
-            return;
-        }
-        sticker.label = check.value;
-        saveAndRefresh(context);
-        // The same warning a pack rename gets, and gated on the same predicate:
-        // a change that normalises away costs no tokens, a real one invalidates
-        // every token already written in a chat.
-        if (renameBreaksTokens(previousLabel, check.value)) {
-            toast('warning', t('sticker.renamed', { name: check.value }));
-        }
-        refresh();
-    });
-    top.append(labelInput);
-
-    if (!normalizeLabel(sticker.label)) {
-        top.append(badge(t('sticker.unlabeled')));
+    const picked = selectedStickerIds.has(sticker.id);
+    if (picked) {
+        cell.classList.add('st-emote-cell-picked');
     }
+
+    cell.setAttribute('role', batching ? 'checkbox' : 'button');
+    cell.setAttribute('tabindex', '0');
+    if (batching) {
+        cell.setAttribute('aria-checked', String(picked));
+        cell.setAttribute('aria-label', t('sticker.selectForDelete'));
+    } else {
+        cell.setAttribute('aria-label', cellCaption(sticker));
+    }
+    cell.title = cellTitle(sticker);
+
+    if (batching) {
+        const tick = markIcon('picked');
+        tick.classList.add('st-emote-cell-pick');
+        cell.append(tick);
+    }
+    cell.append(buildStickerThumb(sticker));
+
     if (isExternalImageUrl(sticker.image)) {
-        top.append(badge(
-            t('sticker.external'),
-            'st-emote-badge-external',
-            t('sticker.externalTitle'),
-        ));
+        const mark = markIcon('external');
+        mark.classList.add('st-emote-cell-external');
+        mark.title = t('sticker.externalTitle');
+        cell.append(mark);
     }
 
-    const detail = document.createElement('div');
-    detail.className = 'st-emote-sticker-detail';
-    row.append(detail);
+    const caption = document.createElement('span');
+    caption.className = 'st-emote-cell-label';
+    caption.textContent = sticker.label;
+    cell.append(caption);
 
-    const descriptionInput = document.createElement('input');
-    descriptionInput.type = 'text';
-    descriptionInput.className = 'text_pole st-emote-description';
-    // The spec's "an empty description shows as an em dash", and an em dash
-    // reads the same in every language this catalog ships.
-    descriptionInput.placeholder = '—';
-    descriptionInput.value = sticker.description ?? '';
-    descriptionInput.addEventListener('change', () => {
-        const result = validateDescription(descriptionInput.value);
-        if (!result.ok) {
-            toast('warning', constraintMessage(context, 'description', result.reason));
-            descriptionInput.value = sticker.description ?? '';
+    const activate = () => {
+        if (batching) {
+            if (selectedStickerIds.has(sticker.id)) {
+                selectedStickerIds.delete(sticker.id);
+            } else {
+                selectedStickerIds.add(sticker.id);
+            }
+            refresh();
             return;
         }
-        sticker.description = result.value;
-        context.saveSettingsDebounced();
-    });
-    detail.append(descriptionInput);
-    detail.append(buildStickerPlacementSelect(context, sticker, () => saveAndRefresh(context)));
-
-    const actions = document.createElement('div');
-    actions.className = 'st-emote-actions';
-    actions.append(filePickerButton(
-        'replaceImage',
-        t('sticker.replace'),
-        { accept: ACCEPTED_MIME, className: 'st-emote-replace' },
-        async (files) => {
-            await replaceStickerImageWithFile(context, pack, sticker, refresh, files[0]);
-        },
-    ));
-
-    if (!searching) {
-        const remove = iconButton('deleteSticker', t('sticker.delete'), 'st-emote-sticker-delete');
-        remove.addEventListener('click', async () => {
-            await handleStickerDelete(context, pack, sticker, refresh);
+        openStickerEditor(context, pack, sticker, {
+            refresh,
+            searching,
+            replace: (file) => replaceStickerImageWithFile(context, pack, sticker, refresh, file),
+            remove: async () => {
+                closeStickerEditor();
+                await handleStickerDelete(context, pack, sticker, refresh);
+            },
         });
-        actions.append(remove);
-    }
-    detail.append(actions);
+    };
+    cell.addEventListener('click', activate);
+    cell.addEventListener('keydown', (event) => {
+        // Enter and Space are what a `role=button` and a `role=checkbox` answer
+        // to; Space scrolls the panel by default, which is why it is prevented.
+        if (event.key !== 'Enter' && event.key !== ' ') {
+            return;
+        }
+        event.preventDefault();
+        activate();
+    });
 
-    return row;
+    return cell;
+}
+
+/**
+ * What a cell says out loud: the 标签 and what a click on it does.
+ *
+ * @param {import('./settings.js').StickerRecord} sticker
+ * @returns {string}
+ */
+function cellCaption(sticker) {
+    return normalizeLabel(sticker.label)
+        ? t('sticker.cellCaption', { name: sticker.label })
+        : t('sticker.cellCaptionUnlabeled');
+}
+
+/**
+ * What a cell says on hover: the 标签 and the 描述, which is the one place the
+ * 描述 is visible without opening the editor.
+ *
+ * @param {import('./settings.js').StickerRecord} sticker
+ * @returns {string}
+ */
+function cellTitle(sticker) {
+    const named = normalizeLabel(sticker.label);
+    const described = (sticker.description ?? '').trim() !== '';
+    if (named && described) {
+        return t('sticker.cellTitle', { name: sticker.label, description: sticker.description });
+    }
+    if (named) {
+        return t('sticker.cellTitleNoDescription', { name: sticker.label });
+    }
+    if (described) {
+        return t('sticker.cellTitleUnlabeled', { description: sticker.description });
+    }
+    return t('sticker.unlabeled');
 }
 
 /**
@@ -1328,26 +1502,30 @@ function badge(text, className = '', title = '') {
 }
 
 /**
- * The row's thumbnail. A local image that is not on this server is drawn as a
- * dashed outline with its own badge, so "external link" and "image did not
- * travel" are told apart at a glance — the two failure modes look identical in
- * the chat and are not the same problem.
+ * The cell's picture. A sticker with no image is drawn as a dashed box with a
+ * question mark in it, so "never had an image" and "external link" are told
+ * apart at a glance — the two failure modes look identical in the chat and are
+ * not the same problem.
  *
  * @param {import('./settings.js').StickerRecord} sticker
  * @returns {Element}
  */
 function buildStickerThumb(sticker) {
+    if (sticker.image === '') {
+        const empty = document.createElement('div');
+        empty.className = 'st-emote-thumb st-emote-thumb-missing';
+        empty.textContent = '?';
+        return empty;
+    }
     const thumb = document.createElement('img');
     thumb.className = 'st-emote-thumb';
     thumb.alt = '';
-    if (sticker.image === '') {
-        thumb.classList.add('st-emote-thumb-missing');
-        return thumb;
-    }
     thumb.src = sticker.image;
     thumb.addEventListener('error', () => {
-        thumb.classList.add('st-emote-thumb-missing');
-        thumb.removeAttribute('src');
+        const dashed = document.createElement('div');
+        dashed.className = 'st-emote-thumb st-emote-thumb-missing';
+        dashed.textContent = '?';
+        thumb.replaceWith(dashed);
     });
     return thumb;
 }
@@ -1368,6 +1546,7 @@ function buildStickerThumb(sticker) {
 async function handleUploads(context, pack, files, refresh) {
     let uploaded = 0;
     const tooTall = [];
+    let lastAdded = null;
 
     for (const file of files) {
         const sticker = createSticker();
@@ -1380,6 +1559,7 @@ async function handleUploads(context, pack, files, refresh) {
         }
         pack.stickers.push(sticker);
         uploaded += 1;
+        lastAdded = sticker.id;
         const height = await measureImageHeight(sticker.image);
         if (exceedsSuggestedHeight(height)) {
             tooTall.push(file.name);
@@ -1399,6 +1579,12 @@ async function handleUploads(context, pack, files, refresh) {
     await refreshStoredImages(context);
     rerenderChat(context);
     refresh();
+    // The pictures landed at the bottom of a grid, below the fold of a pack that
+    // was closed. Putting the last one in front of the user is what makes "I
+    // uploaded, and now what" a question with an answer.
+    if (lastAdded !== null) {
+        revealSticker(pack.name, lastAdded);
+    }
 }
 
 /**
@@ -1425,6 +1611,7 @@ async function handleExternalUrl(context, pack, refresh) {
     toast('success', t('url.added', { name: pack.name }));
     rerenderChat(context);
     refresh();
+    revealSticker(pack.name, sticker.id);
 }
 
 /**
@@ -1580,6 +1767,15 @@ async function handleDeletePack(context, pack, refresh) {
     setChatScope(context, result.chat);
     for (const sticker of pack.stickers) {
         selectedStickerIds.delete(sticker.id);
+    }
+    // The accordion and the batch mode are keyed on this pack's name. Left
+    // pointing at a pack that no longer exists, the list would render with every
+    // header closed and no way to tell that from "nothing is open".
+    if (openPackName === pack.name) {
+        openPackName = null;
+    }
+    if (batchPackName === pack.name) {
+        batchPackName = null;
     }
     context.saveSettingsDebounced();
     for (const file of result.files) {

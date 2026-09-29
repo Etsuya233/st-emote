@@ -16,8 +16,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { ACTION_ICONS } from '../adapter/buttons.js';
+import { ACTION_ICONS, MARK_ICONS } from '../adapter/buttons.js';
 import { STORAGE_KEY } from '../adapter/settings.js';
+import { closeStickerEditor } from '../adapter/sticker-editor.js';
 import { t } from '../core/i18n.js';
 import { FREE_ICON_CLASSES, FREE_ICON_CODEPOINTS } from './contract/font-awesome.js';
 import { fakeFetch, withJsZip, withPanel } from './contract/st-dom.js';
@@ -72,13 +73,10 @@ const CATALOGUE = {
  *   per event — a character card naming a pack that is not installed, for
  *   instance, which is what puts the "create missing packs" button on screen.
  * @param {(document: Document) => (() => void)|void} [options.arrange] - Drive the
- *   panel after it mounts, for the controls that only exist once something has
- *   been ticked. Whatever it returns is run when `body` is done, so the panel's
- *   module state does not leak into the next test: `selectedStickerIds` in
- *   `adapter/ui.js` is deliberately kept across re-renders and across mounts,
- *   because a real user's selection should survive a re-render, and a shared
- *   one is exactly what makes a later test's control surface depend on an
- *   earlier test's ticks.
+ *   panel after it mounts, for the controls that only exist once a pack is open
+ *   or an editor is showing. Whatever it returns is run when `body` is done —
+ *   which matters for the editor, since it hangs off `document.body` and would
+ *   otherwise outlive the page it was opened on.
  * @param {(context: any) => void|Promise<void>} body
  */
 async function withPanelMounted(options, body) {
@@ -140,6 +138,77 @@ test('the panel lists packs sorted by name, with the first sticker as the cover'
     });
 });
 
+test('every pack starts closed, and opening one closes the others', async () => {
+    // The one commitment the whole ticket rests on. A list of forty packs was
+    // forty times six rows; a list of forty closed headers is forty lines, and
+    // "two packs open at once" is precisely the state this panel spent its life
+    // in — the eye could never say which pack it was looking at.
+    await withPanelMounted({}, ({ document }) => {
+        const bodies = [...document.querySelectorAll('.st-emote-pack-body')];
+        assert.equal(bodies.length, 3);
+        for (const body of bodies) {
+            assert.equal(body.hidden, true, 'a pack starts open');
+        }
+        for (const toggle of document.querySelectorAll('.st-emote-pack-toggle')) {
+            assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+            // The state is on the control, and the control is reachable by
+            // keyboard: without a tab stop the grid is a mouse-only feature.
+            assert.equal(toggle.getAttribute('tabindex'), '0');
+        }
+
+        expandPack(document, 'daily');
+        assert.equal(packByName(document, 'daily')
+            .querySelector('.st-emote-pack-toggle').getAttribute('aria-expanded'), 'true');
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-pack-body').hidden, false);
+        // And only that one.
+        assert.equal(packByName(document, 'zeta').querySelector('.st-emote-pack-body').hidden, true);
+        assert.equal(packByName(document, 'blank').querySelector('.st-emote-pack-body').hidden, true);
+
+        expandPack(document, 'zeta');
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-pack-body').hidden, true);
+        assert.equal(packByName(document, 'zeta').querySelector('.st-emote-pack-body').hidden, false);
+    });
+});
+
+test('the pack header is a switch, and its own controls are not', async () => {
+    // The header is one clickable row holding a text field and (in the
+    // missing-images state) a picture that is itself a button. If the row's click
+    // handler did not stand down for them, clicking to rename a pack would open
+    // it and clicking to re-point its images would close it.
+    await withPanelMounted({ storedFiles: [] }, ({ document }) => {
+        expandPack(document, 'daily');
+        const expanded = () => packByName(document, 'daily')
+            .querySelector('.st-emote-pack-toggle').getAttribute('aria-expanded');
+
+        packByName(document, 'daily').querySelector('.st-emote-pack-name').click();
+        assert.equal(expanded(), 'true', 'clicking the 包名 field closed the pack');
+
+        packByName(document, 'daily').querySelector('.st-emote-cover').click();
+        assert.equal(expanded(), 'true', 'clicking the cover closed the pack');
+    });
+});
+
+test('Enter and Space on the pack header open it, and Enter in the 包名 field does not', async () => {
+    await withPanelMounted({}, ({ document }) => {
+        const press = (element, key) => element
+            .dispatchEvent(new globalThis.window.KeyboardEvent('keydown', { key }));
+        const expanded = () => packByName(document, 'daily')
+            .querySelector('.st-emote-pack-toggle').getAttribute('aria-expanded');
+
+        press(packByName(document, 'daily').querySelector('.st-emote-pack-toggle'), 'Enter');
+        assert.equal(expanded(), 'true');
+
+        press(packByName(document, 'daily').querySelector('.st-emote-pack-toggle'), ' ');
+        assert.equal(expanded(), 'false');
+
+        // Open again, then press Enter in the name field: a rename is not a click
+        // on the accordion.
+        press(packByName(document, 'daily').querySelector('.st-emote-pack-toggle'), 'Enter');
+        press(packByName(document, 'daily').querySelector('.st-emote-pack-name'), 'Enter');
+        assert.equal(expanded(), 'true', 'Enter in the 包名 field toggled the pack');
+    });
+});
+
 test('a pack with no stickers reads as empty', async () => {
     await withPanelMounted({}, ({ document }) => {
         const badges = [...document.querySelectorAll('.st-emote-badge')].map((badge) => badge.textContent);
@@ -152,17 +221,21 @@ test('a pack whose image file is not on the server is greyed but still enableabl
     // did not. A pack with a 外链 in it is still "ok" — an external address is
     // not a file this server could be missing.
     await withPanelMounted({ storedFiles: [] }, ({ document }) => {
-        const packs = [...document.querySelectorAll('.st-emote-pack')];
-        const daily = packs.find((pack) => pack.querySelector('.st-emote-pack-name').value === 'daily');
-        assert.equal(daily.classList.contains('st-emote-pack-missing'), true);
+        // Opening a pack repaints the whole list, so anything held from before it
+        // is detached — hence the header assertions first and `daily` looked up
+        // again after the expand.
+        const dailyHeader = packByName(document, 'daily');
+        assert.equal(dailyHeader.classList.contains('st-emote-pack-missing'), true);
         assert.match(
-            daily.querySelector('.st-emote-badge-images-missing').textContent,
+            dailyHeader.querySelector('.st-emote-badge-images-missing').textContent,
             /images not synced/,
         );
 
         // Still enableable: the scope boxes a greyed-out pack offers are the
         // same ones an ordinary pack gets, and the Global one works. (Character
         // is disabled here for an unrelated reason: no character is selected.)
+        expandPack(document, 'daily');
+        const daily = packByName(document, 'daily');
         const toggles = [...daily.querySelectorAll('.st-emote-scopes input')];
         assert.equal(toggles.length, 3);
         const [globalBox, , chatBox] = toggles;
@@ -232,6 +305,7 @@ test('importing a pack with an image the rules refuse stores nothing', async (t)
 
 test('a URL that is not an http address is refused', async () => {
     await withPanelMounted({}, async ({ document, extensionSettings, toasts }) => {
+        expandPack(document, 'daily');
         globalThis.prompt = () => 'javascript:alert(1)';
         packByName(document, 'daily').querySelector('.st-emote-add-url').click();
         await settle();
@@ -242,22 +316,206 @@ test('a URL that is not an http address is refused', async () => {
     });
 });
 
-test('an external sticker is marked as one, and its row has no local file to lose', async () => {
+test('an external sticker wears a corner mark, and the editor still says "external"', async () => {
+    // A 56px cell has no room for the word, so the word moved to the editor and
+    // the grid got a mark. Both halves are asserted, because a mark with no word
+    // anywhere is an unexplained glyph, and a word with no mark is a grid where
+    // 外链 and a local file look identical.
     await withPanelMounted({}, ({ document }) => {
-        const badges = [...document.querySelectorAll('.st-emote-badge-external')].map((b) => b.textContent);
-        assert.deepEqual(badges, ['external']);
+        expandPack(document, 'daily');
+        const cells = [...packByName(document, 'daily').querySelectorAll('.st-emote-cell')];
+        assert.deepEqual(
+            cells.map((cell) => cell.querySelector('.st-emote-cell-external') !== null),
+            [false, false, true],
+        );
+
+        const badge = openEditor(document, 'daily', 'wave').querySelector('.st-emote-badge-external');
+        assert.equal(badge.textContent, 'external');
+        assert.match(badge.title, /comes from a URL/);
+    });
+});
+
+test('the grid is one square per sticker, and a square is a picture and its 标签 and nothing else', async () => {
+    // The reduction this ticket exists for. A cell used to be two rows and six
+    // controls; if one of them creeps back onto the cell the panel starts being
+    // the wall of controls again, and nothing else about the ticket would fail.
+    await withPanelMounted({}, ({ document }) => {
+        expandPack(document, 'daily');
+        const cells = [...packByName(document, 'daily').querySelectorAll('.st-emote-cell')];
+        assert.equal(cells.length, 3);
+
+        for (const cell of cells) {
+            // A cell is a button, it is reachable, and it says what it is.
+            assert.equal(cell.getAttribute('role'), 'button');
+            assert.equal(cell.getAttribute('tabindex'), '0');
+            assert.match(cell.getAttribute('aria-label'), /click to edit$/);
+            // The picture and the 标签, and nothing that is a control.
+            assert.equal(cell.querySelectorAll('input, select, .menu_button').length, 0);
+            assert.ok(cell.querySelector('.st-emote-thumb'));
+            assert.ok(cell.querySelector('.st-emote-cell-label'));
+            // `data-label` and `data-sticker-id` are what a test — and
+            // `revealSticker` — name a cell by.
+            assert.equal(typeof cell.dataset.stickerId, 'string');
+        }
+        assert.deepEqual(
+            cells.map((cell) => cell.querySelector('.st-emote-cell-label').textContent),
+            ['happy', 'sad', 'wave'],
+        );
+        // And the 描述, which no longer has a field of its own, is one hover away.
+        assert.match(cells[0].title, /^happy: a wide grin$/);
+        assert.match(cells[1].title, /^sad: a frown$/);
+    });
+});
+
+test('clicking a cell opens the editor, and it holds that sticker\'s five controls', async () => {
+    await withPanelMounted({}, ({ document }) => {
+        assert.equal(document.querySelector('.st-emote-editor'), null);
+
+        const editor = openEditor(document, 'daily', 'happy');
+        // The dialog names itself with the sticker, so a screen reader says which
+        // of thirty stickers just opened rather than "dialog".
+        assert.equal(editor.getAttribute('role'), 'dialog');
+        assert.equal(editor.getAttribute('aria-modal'), 'true');
+        assert.equal(editor.getAttribute('aria-label'), 'happy');
+        // On the body rather than inside the panel: `#st_emote_drawer` lives in the
+        // client's own drawer, which scrolls and clips a fixed layer, and the panel
+        // scrolls as one long column either way.
+        assert.equal(editor.closest('#st_emote_drawer'), null);
+
+        assert.equal(editor.querySelector('.st-emote-label').value, 'happy');
+        assert.equal(editor.querySelector('.st-emote-description').value, 'a wide grin');
+        assert.ok(editor.querySelector('.st-emote-sticker-placement'));
+        assert.ok(editor.querySelector('.st-emote-replace'));
+        assert.ok(editor.querySelector('.st-emote-sticker-delete'));
+        // And the 标签 field has the keyboard, because that is what was clicked.
+        assert.equal(document.activeElement, editor.querySelector('.st-emote-label'));
+
+        // Only one at a time: another cell moves the editor rather than stacking
+        // a second copy of the same form on top of the first.
+        stickerCell(document, 'daily', 'sad').click();
+        assert.equal(document.querySelectorAll('.st-emote-editor').length, 1);
+        assert.equal(document.querySelector('.st-emote-editor').getAttribute('aria-label'), 'sad');
+    });
+});
+
+test('the editor closes on Escape, on the backdrop, and on its own close button', async () => {
+    await withPanelMounted({}, ({ document }) => {
+        openEditor(document, 'daily', 'happy')
+            .dispatchEvent(new globalThis.window.KeyboardEvent('keydown', { key: 'Escape' }));
+        assert.equal(document.querySelector('.st-emote-editor'), null, 'Escape did not close the editor');
+
+        openEditor(document, 'daily', 'happy').querySelector('.st-emote-editor-backdrop').click();
+        assert.equal(document.querySelector('.st-emote-editor'), null, 'the backdrop did not close it');
+
+        openEditor(document, 'daily', 'happy').querySelector('.st-emote-editor-close').click();
+        assert.equal(document.querySelector('.st-emote-editor'), null, 'the close button did not close it');
+    });
+});
+
+test('a sticker with no label says so in the cell, in the hover text and in the editor', async () => {
+    await withPanelMounted({
+        settings: {
+            packs: [{
+                name: 'blank',
+                stickers: [{ id: 'n1', label: '', description: 'a shrug', image: local('d1.png') }],
+            }],
+        },
+    }, ({ document }) => {
+        expandPack(document, 'blank');
+        const cell = stickerCell(document, 'blank', '');
+        assert.match(cell.getAttribute('aria-label'), /^No label yet/);
+        assert.match(cell.title, /^No label yet: a shrug$/);
+        assert.equal(cell.querySelector('.st-emote-cell-label').textContent, '');
+
+        // And the editor names it the same way the cell does.
+        assert.equal(
+            openEditor(document, 'blank', '').getAttribute('aria-label'),
+            'no label yet',
+        );
+    });
+});
+
+test('批量 is a mode: the ticks and the batch bar exist only while it is on', async () => {
+    // The other half of the reduction. "Select for a batch delete" used to be a
+    // checkbox on every sticker of every pack, permanently, so a once-a-month
+    // operation owned a piece of the most valuable space on the panel.
+    await withPanelMounted({}, ({ document }) => {
+        expandPack(document, 'daily');
+        assert.equal(document.querySelector('.st-emote-selection'), null, 'the batch bar is there unasked for');
+        assert.equal(document.querySelector('.st-emote-cell-pick'), null, 'a cell wears a tick unasked for');
+        for (const cell of packByName(document, 'daily').querySelectorAll('.st-emote-cell')) {
+            assert.equal(cell.getAttribute('role'), 'button');
+        }
+
+        const batch = packByName(document, 'daily').querySelector('.st-emote-batch');
+        assert.equal(batch.getAttribute('aria-pressed'), 'false');
+        assert.match(batch.getAttribute('aria-label'), /^Select stickers$/);
+        batch.click();
+
+        const reopened = packByName(document, 'daily').querySelector('.st-emote-batch');
+        assert.equal(reopened.getAttribute('aria-pressed'), 'true');
+        assert.match(reopened.getAttribute('aria-label'), /^Stop selecting stickers$/);
+        assert.ok(packByName(document, 'daily').querySelector('.st-emote-selection'));
+        // In 批量 mode a cell is a checkbox, and clicking it ticks rather than
+        // opens — a tick *inside* a clickable cell is a cell where half the
+        // clicks do something the label did not promise.
+        for (const cell of packByName(document, 'daily').querySelectorAll('.st-emote-cell')) {
+            assert.equal(cell.getAttribute('role'), 'checkbox');
+            assert.equal(cell.getAttribute('aria-checked'), 'false');
+        }
+        stickerCell(document, 'daily', 'happy').click();
+        assert.equal(document.querySelector('.st-emote-editor'), null, 'a click in 批量 mode opened the editor');
+        assert.equal(stickerCell(document, 'daily', 'happy').getAttribute('aria-checked'), 'true');
+        assert.ok(stickerCell(document, 'daily', 'happy').querySelector('.st-emote-cell-pick'));
+
+        // And out again: the same button, back to being a button.
+        packByName(document, 'daily').querySelector('.st-emote-batch').click();
+        assert.equal(document.querySelector('.st-emote-selection'), null);
+        assert.equal(stickerCell(document, 'daily', 'happy').getAttribute('role'), 'button');
+    });
+});
+
+test('a pack\'s batch mode and its ticks survive closing the pack and reopening it', async () => {
+    // The panel's list is rebuilt from scratch on every change, so any of this
+    // state held on an element would be gone by the next repaint. A selection
+    // that reset itself on the first click of the next pack would be unusable.
+    await withPanelMounted({}, ({ document }) => {
+        enterBatchMode(document, 'daily');
+        stickerCell(document, 'daily', 'happy').click();
+        stickerCell(document, 'daily', 'sad').click();
+
+        packByName(document, 'daily').querySelector('.st-emote-pack-toggle').click();
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-pack-body').hidden, true);
+        expandPack(document, 'daily');
+
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-batch')
+            .getAttribute('aria-pressed'), 'true');
+        assert.equal(stickerCell(document, 'daily', 'happy').getAttribute('aria-checked'), 'true');
+        assert.equal(stickerCell(document, 'daily', 'wave').getAttribute('aria-checked'), 'false');
+        // Which is why the batch bar can offer a delete of exactly two.
+        assert.match(
+            packByName(document, 'daily').querySelector('.st-emote-delete-selected')
+                .getAttribute('aria-label'),
+            /^Delete 2 selected$/,
+        );
     });
 });
 
 test('the search box filters by label and by description, case- and space-insensitively', async () => {
     await withPanelMounted({}, ({ document }) => {
         const search = document.getElementById('st_emote_search');
+        // The labels come out of the matching packs' grids, so each of them is
+        // opened first — a search narrows the list, it does not expand it.
         const searchFor = (value) => {
             search.value = value;
             search.dispatchEvent(new globalThis.window.Event('input'));
+            const packs = [...document.querySelectorAll('.st-emote-pack-name')].map((i) => i.value);
+            for (const name of packs) {
+                expandPack(document, name);
+            }
             return {
-                packs: [...document.querySelectorAll('.st-emote-pack-name')].map((i) => i.value),
-                labels: [...document.querySelectorAll('.st-emote-label')].map((i) => i.value),
+                packs,
+                labels: [...document.querySelectorAll('.st-emote-cell')].map((cell) => cell.dataset.label),
             };
         };
 
@@ -273,6 +531,34 @@ test('the search box filters by label and by description, case- and space-insens
     });
 });
 
+test('a search narrows the grid but withholds the delete that would act on what it hides', async () => {
+    // The rule the search already had, and the reason it still matters: the batch
+    // delete reads a pack's whole sticker list, so while the grid is showing four
+    // of forty, "delete the selected" is a button pointed at stickers nobody can
+    // see. The grid is now one click further away than it was, so the guard is
+    // worth saying out loud rather than leaving in the code.
+    await withPanelMounted({}, ({ document }) => {
+        const search = document.getElementById('st_emote_search');
+        search.value = 'grin';
+        search.dispatchEvent(new globalThis.window.Event('input'));
+        enterBatchMode(document, 'daily');
+
+        const bar = packByName(document, 'daily').querySelector('.st-emote-selection');
+        assert.match(bar.textContent, /Select the matches/);
+        assert.match(bar.textContent, /Clear the search/);
+        // And the pack's own delete is withheld for the same reason.
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-delete-pack'), null);
+
+        // The editor offers no delete either — and it is opened with 批量 mode off,
+        // because in 批量 mode a click on a cell is a tick and not a click.
+        packByName(document, 'daily').querySelector('.st-emote-batch').click();
+        const editor = openEditor(document, 'daily', 'happy');
+        assert.equal(editor.querySelector('.st-emote-sticker-delete'), null);
+        assert.ok(editor.querySelector('.st-emote-replace'));
+        assert.ok(editor.querySelector('.st-emote-label'));
+    });
+});
+
 test('selecting several stickers and deleting them removes the records and calls the endpoint', async () => {
     const fetchImpl = fakeFetch({
         list: { body: ['st-emote-d1.png', 'st-emote-d2.png'] },
@@ -281,13 +567,11 @@ test('selecting several stickers and deleting them removes the records and calls
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
         harnessConfirm(true);
 
-        // Tick two rows. Each tick re-renders the list, so the next row is looked
-        // up again rather than held on to.
+        // 批量 mode, then tick two cells. Each tick rebuilds the grid, so the next
+        // cell is looked up again rather than held on to.
+        enterBatchMode(document, 'daily');
         for (const label of ['happy', 'sad']) {
-            const row = stickerRow(document, 'daily', label);
-            const tick = row.querySelector('.st-emote-sticker-tick');
-            tick.checked = true;
-            tick.dispatchEvent(new globalThis.window.Event('change'));
+            stickerCell(document, 'daily', label).click();
         }
 
         const button = document.querySelector('.st-emote-delete-selected');
@@ -313,6 +597,7 @@ test('deleting a pack asks first, and only then removes it from the catalogue an
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
         harnessConfirm(true);
 
+        expandPack(document, 'daily');
         packByName(document, 'daily').querySelector('.st-emote-delete-pack').click();
         await settle();
 
@@ -335,6 +620,7 @@ test('a declined delete leaves the pack and its files alone', async () => {
     });
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
         harnessConfirm(false);
+        expandPack(document, 'daily');
         packByName(document, 'daily').querySelector('.st-emote-delete-pack').click();
         await settle();
 
@@ -351,7 +637,7 @@ test('replacing a sticker image keeps the label and description and drops the ol
         remove: { status: 200 },
     });
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
-        const picker = stickerRow(document, 'daily', 'happy').querySelector('input[type=file]');
+        const picker = openEditor(document, 'daily', 'happy').querySelector('input[type=file]');
         const file = new globalThis.window.File(['x'], 'new.png', { type: 'image/png' });
         Object.defineProperty(picker, 'files', { value: [file], configurable: true });
         picker.dispatchEvent(new globalThis.window.Event('change'));
@@ -374,6 +660,7 @@ test('uploading refuses a file the core rejects, and says why', async () => {
         upload: (body) => ({ body: { path: `user/images/st-emote/st-emote-new.${body.format}` } }),
     });
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings, toasts }) => {
+        expandPack(document, 'daily');
         const picker = packByName(document, 'daily').querySelector('input[type=file]');
         const tooBig = new globalThis.window.File(['x'], 'huge.png', { type: 'image/png' });
         Object.defineProperty(tooBig, 'size', { value: 6 * 1024 * 1024 });
@@ -394,6 +681,7 @@ test('uploading refuses a file the core rejects, and says why', async () => {
 
 test('adding a URL sticker stores the address and marks it external', async () => {
     await withPanelMounted({}, async ({ document, extensionSettings }) => {
+        expandPack(document, 'daily');
         globalThis.prompt = () => 'https://example.com/cat.gif';
         packByName(document, 'daily').querySelector('.st-emote-add-url').click();
         await settle();
@@ -402,8 +690,15 @@ test('adding a URL sticker stores the address and marks it external', async () =
             .find((pack) => pack.name === 'daily').stickers.at(-1);
         assert.equal(added.image, 'https://example.com/cat.gif');
         assert.equal(added.label, '');
+        // The new sticker wears the corner mark, and the pack opened itself so the
+        // cell it landed in is on screen at all.
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-pack-toggle')
+            .getAttribute('aria-expanded'), 'true');
+        const cell = [...packByName(document, 'daily').querySelectorAll('.st-emote-cell')].at(-1);
+        assert.ok(cell.querySelector('.st-emote-cell-external'));
+        // And the word is one editor away, because a mark alone explains nothing.
         assert.match(
-            document.querySelectorAll('.st-emote-badge-external')[0].textContent,
+            openEditor(document, 'daily', '').querySelector('.st-emote-badge-external').textContent,
             /external/,
         );
         delete globalThis.prompt;
@@ -421,7 +716,7 @@ test('replacing a sticker image keeps the label and description and drops the ol
         remove: { status: 200 },
     });
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
-        const picker = stickerRow(document, 'daily', 'happy').querySelector('input[type=file]');
+        const picker = openEditor(document, 'daily', 'happy').querySelector('input[type=file]');
         const file = new globalThis.window.File(['new'], 'new.png', { type: 'image/png' });
         Object.defineProperty(picker, 'files', { value: [file], configurable: true });
         picker.dispatchEvent(new globalThis.window.Event('change'));
@@ -449,7 +744,7 @@ test('a replace that lands on the same path does not delete the image it just wr
         remove: { status: 200 },
     });
     await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
-        const picker = stickerRow(document, 'daily', 'happy').querySelector('input[type=file]');
+        const picker = openEditor(document, 'daily', 'happy').querySelector('input[type=file]');
         const file = new globalThis.window.File(['new'], 'new.png', { type: 'image/png' });
         Object.defineProperty(picker, 'files', { value: [file], configurable: true });
         picker.dispatchEvent(new globalThis.window.Event('change'));
@@ -471,7 +766,7 @@ test('a replace that lands on the same path does not delete the image it just wr
 
 test('renaming a label that only changes its spelling warns about nothing', async () => {
     await withPanelMounted({}, async ({ document, toasts, extensionSettings }) => {
-        const input = packByName(document, 'daily').querySelector('.st-emote-label');
+        const input = openEditor(document, 'daily', 'happy').querySelector('.st-emote-label');
         input.value = 'Happy';
         input.dispatchEvent(new globalThis.window.Event('change'));
 
@@ -486,7 +781,7 @@ test('renaming a label that only changes its spelling warns about nothing', asyn
 
 test('renaming a label for real warns that the old tokens stop matching', async () => {
     await withPanelMounted({}, async ({ document, toasts, extensionSettings }) => {
-        const input = packByName(document, 'daily').querySelector('.st-emote-label');
+        const input = openEditor(document, 'daily', 'happy').querySelector('.st-emote-label');
         input.value = 'grinning';
         input.dispatchEvent(new globalThis.window.Event('change'));
 
@@ -499,6 +794,32 @@ test('renaming a label for real warns that the old tokens stop matching', async 
             extensionSettings[STORAGE_KEY].packs.find((pack) => pack.name === 'daily').stickers[0].label,
             'grinning',
         );
+        // And the grid follows the rename: the editor lives outside the list, so
+        // the list has to be repainted for the cell to stop saying "happy".
+        assert.equal(stickerCell(document, 'daily', 'grinning') !== null, true);
+        assert.equal(stickerCell(document, 'daily', 'happy'), null);
+    });
+});
+
+test('deleting a sticker from the editor asks first, and the cell goes with it', async () => {
+    const fetchImpl = fakeFetch({
+        list: { body: ['st-emote-d1.png', 'st-emote-d2.png'] },
+        remove: { status: 200 },
+    });
+    await withPanelMounted({ fetch: fetchImpl }, async ({ document, extensionSettings }) => {
+        harnessConfirm(true);
+        openEditor(document, 'daily', 'happy').querySelector('.st-emote-sticker-delete').click();
+        await settle();
+
+        assert.match(globalThis.__confirm.message, /"happy"/);
+        assert.equal(document.querySelector('.st-emote-editor'), null, 'the editor outlived its sticker');
+        assert.equal(stickerCell(document, 'daily', 'happy'), null);
+        assert.deepEqual(
+            extensionSettings[STORAGE_KEY].packs
+                .find((pack) => pack.name === 'daily').stickers.map((sticker) => sticker.label),
+            ['sad', 'wave'],
+        );
+        globalThis.__confirm = null;
     });
 });
 
@@ -1023,12 +1344,62 @@ test('every icon the panel draws is one whose glyph is in the client\'s free fon
         );
     }
 
+    // The marks, which a grid cell wears rather than a button. Same two-part
+    // evidence, so the class string in `MARK_ICONS` cannot drift from what was
+    // verified either.
+    for (const [mark, classes] of Object.entries(MARK_ICONS)) {
+        const recorded = FREE_ICON_CLASSES[`${mark}Mark`];
+        assert.ok(recorded, `the ${mark} mark draws a glyph nobody verified`);
+        assert.equal(classes, `fa-solid ${recorded}`, `the ${mark} mark draws an unverified glyph`);
+        assert.ok(
+            Number.isInteger(FREE_ICON_CODEPOINTS[`${mark}Mark`]),
+            `the ${mark} mark has no recorded codepoint`,
+        );
+    }
+
     // And the two chevrons the collapsible headers use, which are not in
     // `ACTION_ICONS` because they are not buttons. The client picks the class
     // and the free font has to carry both directions, or a section opens onto a
     // blank arrow.
     assert.equal(FREE_ICON_CLASSES.sectionChevronDown, 'fa-circle-chevron-down');
     assert.equal(FREE_ICON_CLASSES.sectionChevronUp, 'fa-circle-chevron-up');
+});
+
+test('every Font Awesome class on the panel is one the recorded font carries', async () => {
+    // The belt to the test above's braces. `ACTION_ICONS` and `MARK_ICONS` are
+    // where a glyph *should* come from; this asks what is actually on the page,
+    // in every state the panel can reach, and fails on a class typed inline
+    // somewhere nobody looked. Same question as the table test, asked of the DOM
+    // rather than of the source.
+    const known = new Set(
+        [...Object.values(ACTION_ICONS), ...Object.values(MARK_ICONS)]
+            .join(' ')
+            .split(' '),
+    );
+    const drawn = new Set();
+    for (const state of iconButtonStates()) {
+        // eslint-disable-next-line no-await-in-loop
+        await withPanelMounted(state.options, ({ document }) => {
+            for (const element of document.querySelectorAll('#st_emote_drawer i, .st-emote-editor i')) {
+                for (const name of element.classList) {
+                    if (name.startsWith('fa-')) {
+                        drawn.add(name);
+                    }
+                }
+            }
+        });
+    }
+    assert.ok(drawn.size > 0, 'no Font Awesome class was drawn at all');
+    for (const name of drawn) {
+        assert.equal(known.has(name), true, `"${name}" is drawn but is in neither icon table`);
+    }
+    // And the other direction, for the marks only: a mark nothing ever draws is a
+    // name waiting for a cell that will never exist, which is the dead-name
+    // failure the button table has an orphan test for.
+    for (const classes of Object.values(MARK_ICONS)) {
+        const [, glyph] = classes.split(' ');
+        assert.ok(drawn.has(glyph), `the ${glyph} mark is verified but no cell ever draws it`);
+    }
 });
 
 test('every button draws one of those glyphs, and every one of those is drawn', async () => {
@@ -1064,8 +1435,10 @@ test('every button draws one of those glyphs, and every one of those is drawn', 
         assert.equal(allowed.has(name), true, `"${name}" is drawn but was never verified`);
     }
     for (const name of allowed) {
-        if (name === 'fa-solid' || name.startsWith('fa-circle-chevron-')) {
-            continue; // the family, and the client's own chevrons
+        if (name === 'fa-solid'
+            || name.startsWith('fa-circle-chevron-')
+            || Object.values(MARK_ICONS).includes(`fa-solid ${name}`)) {
+            continue; // the family, the client's own chevrons, and the grid's marks
         }
         assert.ok(
             drawn.has(name),
@@ -1113,16 +1486,18 @@ test('the catalog sentence behind an icon button is the one it used to paint', a
     const PROBE = '7';
     const english = await iconButtonLabels();
     for (const [handle, expected] of Object.entries(EXPECTED_ICON_BUTTON_KEYS)) {
-        const sentence = t(expected.key, { count: PROBE });
         const actual = english.get(handle) ?? '';
+        // A toggle button names one handle twice — once per direction — so the
+        // keys are listed rather than pinned to one.
+        const keys = expected.keys ?? [expected.key];
+        const sentences = keys.map((key) => t(key, { count: PROBE }));
         if (expected.count) {
-            assert.equal(
-                actual.replace(expected.count, PROBE),
-                sentence,
-                `${handle} does not say ${expected.key}`,
+            assert.ok(
+                sentences.includes(actual.replace(expected.count, PROBE)),
+                `${handle} does not say ${keys.join(' or ')}`,
             );
         } else {
-            assert.equal(actual, sentence, `${handle} does not say ${expected.key}`);
+            assert.ok(sentences.includes(actual), `${handle} does not say ${keys.join(' or ')}`);
         }
     }
 
@@ -1130,16 +1505,16 @@ test('the catalog sentence behind an icon button is the one it used to paint', a
     // reach the tooltip and miss the accessible name, or the reverse.
     const chinese = await iconButtonLabels({ locale: 'zh-cn' });
     for (const [handle, expected] of Object.entries(EXPECTED_ICON_BUTTON_KEYS)) {
-        const sentence = t(expected.key, { count: PROBE });
+        const keys = expected.keys ?? [expected.key];
+        const sentences = keys.map((key) => t(key, { count: PROBE }));
         const actual = chinese.get(handle) ?? '';
         if (expected.count) {
-            assert.equal(
-                actual.replace(expected.count, PROBE),
-                sentence,
-                `${handle} does not say ${expected.key} in Chinese`,
+            assert.ok(
+                sentences.includes(actual.replace(expected.count, PROBE)),
+                `${handle} does not say ${keys.join(' or ')} in Chinese`,
             );
         } else {
-            assert.equal(actual, sentence, `${handle} does not say ${expected.key} in Chinese`);
+            assert.ok(sentences.includes(actual), `${handle} does not say ${keys.join(' or ')} in Chinese`);
         }
         assert.notEqual(actual, english.get(handle), `${handle} is not translated`);
     }
@@ -1347,82 +1722,180 @@ test('no collapsible section is built as a widget of our own', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The panel's layout (ticket 10).
+// The panel's control surface.
 //
 // The 观感 of the panel is CSS, and jsdom cannot see any of it. What jsdom *can*
-// see is the thing that would wreck a pure-layout change by accident: the set of
-// controls. So the tests below hold two lines.
-//   1. the control set is exactly what it was before the reflow (one snapshot);
-//   2. the shape the reflow is supposed to have actually happened.
+// see is the thing a layout change would wreck by accident: the set of controls.
+// Tickets 10, 11 and 13 all moved controls around and left this list byte for
+// byte identical, which is what proved that they had. **Ticket 12 is the first
+// change to touch it**, and it did so deliberately: the 标签, 描述, 投放方式,
+// replace and delete of every sticker stopped being on screen, and one 批量
+// button per pack arrived. The diff on the list below is that change, in full.
 // ---------------------------------------------------------------------------
 
-test('the panel still offers exactly the controls it offered before the layout reflow', async () => {
-    // The guard for the whole ticket. A layout change is allowed to move
-    // controls around the panel; it is not allowed to add one, drop one, rename
-    // one or change what one says. This list is the panel's control surface as
-    // it stood before anything moved, and a line appearing or disappearing is a
-    // real finding rather than a snapshot to be updated.
-    //
+test('the control surface says exactly what the panel offers', async () => {
     // Every control is one line: **where** it is, **what** it is (tag, input
     // type, id, classes, and for a select the choices it offers), and **what it
     // says** (its caption, or its title / placeholder where there is none). The
     // sort makes the list indifferent to the order the panel happens to build
-    // things in, which is the one thing a reflow is allowed to change.
-    await withPanelMounted({}, ({ document }) => {
+    // things in.
+    //
+    // **The state it is read in is part of the assertion, and it says so.** A
+    // closed pack with no ticks shows a third of the panel, so this reads the list
+    // with one pack open, 批量 mode on and two stickers ticked — the state that
+    // shows the most of the panel at once. The editor is the one thing it cannot
+    // reach, and gets its own list in the test below.
+    await withPanelMounted({
+        arrange: (document) => {
+            enterBatchMode(document, 'daily');
+            stickerCell(document, 'daily', 'happy').click();
+            stickerCell(document, 'daily', 'sad').click();
+        },
+    }, ({ document }) => {
         assert.deepEqual(controlSurface(document), EXPECTED_CONTROL_SURFACE);
     });
 });
 
-test('a sticker row is two rows: the 标签 alone on top, the 描述 and the override below', async () => {
-    await withPanelMounted({}, ({ document }) => {
-        const row = stickerRow(document, 'daily', 'happy');
-        const top = row.querySelector('.st-emote-sticker-main');
-        const bottom = row.querySelector('.st-emote-sticker-detail');
-
-        assert.ok(top, 'the sticker row has no first row');
-        assert.ok(bottom, 'the sticker row has no second row');
-        // Two rows, and only two: a third would mean something moved back up.
-        assert.deepEqual([...row.children], [top, bottom]);
-
-        // The 标签 is the 标识 and has to be readable at a glance, so it stays on
-        // top; the 描述 is content and gets the width of the whole row below.
-        for (const selector of ['.st-emote-sticker-tick', '.st-emote-thumb', '.st-emote-label']) {
-            assert.equal(top.querySelector(selector)?.closest('.st-emote-sticker') === row, true, selector);
-            assert.equal(top.querySelector(selector) !== null, true, `${selector} is not on the first row`);
-        }
-        assert.equal(bottom.querySelector('.st-emote-description') !== null, true);
-        assert.equal(top.querySelector('.st-emote-description'), null);
-        // The 投放方式 override is a rarely-used per-sticker setting, so it sits on
-        // the second row with the actions rather than between the two fields a user
-        // actually types into. This also keeps the row's tab order identical to what
-        // the one-line layout gave: 标签, 描述, 投放方式, Replace, Delete.
-        assert.equal(top.querySelector('.st-emote-sticker-placement'), null);
-        assert.equal(bottom.querySelector('.st-emote-sticker-placement') !== null, true);
-        for (const selector of ['.st-emote-replace', '.st-emote-sticker-delete']) {
-            assert.equal(bottom.querySelector(selector) !== null, true, `${selector} is not on the second row`);
-        }
+test('and the editor is the same list with one sticker\'s fields on top of it', async () => {
+    await withPanelMounted({
+        arrange: (document) => {
+            openEditor(document, 'daily', 'happy');
+            return () => closeStickerEditor();
+        },
+    }, ({ document }) => {
+        assert.deepEqual(controlSurface(document), EXPECTED_EDITOR_SURFACE);
     });
 });
 
-test('the 作用域 toggles and "Select all" share one row', async () => {
+test('the editor holds one sticker\'s fields, in the order the panel has always used', async () => {
+    // The row it replaces was two rows in a fixed order, and a reflow that
+    // silently reorders what Tab reaches is the kind of thing nobody notices
+    // until it annoys them daily. The fields moved; the order did not.
+    await withPanelMounted({}, ({ document }) => {
+        const editor = openEditor(document, 'daily', 'happy');
+        const body = editor.querySelector('.st-emote-editor-body');
+        assert.deepEqual(
+            [...body.children].map((child) => [...child.classList].at(-1)),
+            [
+                'st-emote-label',
+                'st-emote-description',
+                'st-emote-sticker-placement',
+                'st-emote-actions',
+            ],
+        );
+        // The picture is at the top of the dialog rather than among the fields:
+        // the reason a user opens the editor is very often that a sticker is not
+        // drawing.
+        assert.ok(editor.querySelector('.st-emote-editor-preview img'));
+    });
+});
+
+test('the editor is a surface of its own, above the drawer that opened it', async () => {
+    // Three facts about how the dialog is painted, none of which jsdom and none
+    // of which the DOM can see — and every one of them was wrong at once, which
+    // is what made the dialog read as broken rather than as misplaced: it was
+    // drawn *under* the extensions drawer, seen through that drawer's blurred
+    // translucent background; its 标签 and badges were painted in the colour of
+    // their own background; and its 投放方式 select was a 9em-tall box, because
+    // the panel's row sizing was sizing it as a height.
+    const rules = readStyleSheet();
+
+    // Above `#top-settings-holder`, which is `position: relative; z-index: 3005`
+    // and 4005 while a drawer is open — the state the editor is only ever opened
+    // in. The layer hangs off `body`, so the two compete in the root stacking
+    // context and this is the whole of the comparison.
+    await withPanelMounted({
+        arrange: (document) => {
+            openEditor(document, 'daily', 'happy');
+            return () => closeStickerEditor();
+        },
+    }, ({ document }) => {
+        const layer = document.querySelector('.st-emote-editor');
+        assert.equal(layer.parentElement, document.body, 'the layer is not a child of body');
+    });
+    const zIndex = Number((rules['.st-emote-editor'] ?? '').match(/z-index:\s*(\d+)/)?.[1]);
+    assert.ok(
+        Number.isFinite(zIndex) && zIndex > 4005,
+        `the editor layer's z-index (${zIndex}) does not outrank the top settings holder`,
+    );
+
+    // A background and a text colour, and not the same variable twice: the
+    // client's `body` is `color: var(--SmartThemeBodyColor)`, so a card
+    // backgrounded with that variable draws its own text in its own colour.
+    const card = rules['.st-emote-editor-card'] ?? '';
+    const background = card.match(/(?:^|;)\s*background:\s*([^;]+)/)?.[1]?.trim();
+    const colour = card.match(/(?:^|;)\s*color:\s*([^;]+)/)?.[1]?.trim();
+    assert.ok(background, 'the card has no background of its own');
+    assert.ok(colour, 'the card takes its text colour from the page');
+    assert.notEqual(background, colour, 'the card is painted in its own text colour');
+
+    // The 投放方式 select, sized for a column. The panel's rule is a width
+    // because the select sits in a *row* there, and a flex basis in the dialog's
+    // column is a height.
+    assert.match(
+        rules['.st-emote-sticker-placement'] ?? '',
+        /flex:\s*0 1 9em/,
+        'the panel no longer sizes the select as a row',
+    );
+    assert.match(
+        rules['.st-emote-editor-body .st-emote-sticker-placement'] ?? '',
+        /flex:\s*0 0 auto/,
+        "the dialog's column does not undo that row sizing",
+    );
+
+    // And the two spacing numbers, declared where the layer can reach them: it
+    // is a child of `body` and a stranger to `#st_emote_drawer`, so a variable
+    // scoped to the drawer leaves every `gap` in the dialog at `normal`.
+    assert.match(rules['body'] ?? '', /--st-emote-gap/, 'body declares neither spacing number');
+    assert.match(rules['body'] ?? '', /--st-emote-space/, 'body declares neither spacing number');
+    assert.equal(
+        /--st-emote-gap/.test(rules['#st_emote_drawer'] ?? ''),
+        false,
+        'the spacing numbers are scoped to the drawer, which the layer is not inside',
+    );
+});
+
+test('the 作用域 toggles and the batch bar share one row, inside an open pack', async () => {
+    await withPanelMounted({}, ({ document }) => {
+        // Not there at all while the pack is closed: a row of three checkboxes per
+        // collapsed pack is forty rows of checkboxes in a library of forty.
+        assert.equal(packByName(document, 'daily').querySelector('.st-emote-pack-controls'), null);
+
+        expandPack(document, 'daily');
+        const row = packByName(document, 'daily').querySelector('.st-emote-pack-controls');
+        assert.ok(row, 'the pack has no shared controls row');
+        // The 作用域 half is always there; the batch half only in 批量 mode, and
+        // then as a sibling rather than a row of its own.
+        assert.equal(row.querySelector('.st-emote-scopes').parentElement, row);
+        assert.equal(row.querySelectorAll('input[type=checkbox]').length, 3);
+        assert.equal(row.querySelector('.st-emote-selection'), null);
+
+        packByName(document, 'daily').querySelector('.st-emote-batch').click();
+        const withBatch = packByName(document, 'daily').querySelector('.st-emote-pack-controls');
+        assert.deepEqual(
+            [...withBatch.children].map((child) => child.className),
+            ['st-emote-scopes', 'st-emote-selection'],
+        );
+        assert.ok(withBatch.querySelector('input[type=checkbox]'));
+    });
+});
+
+test('a pack is a header and a body, and a closed pack costs one row', async () => {
+    // The whole reduction in one assertion.
     await withPanelMounted({}, ({ document }) => {
         const pack = packByName(document, 'daily');
-        const row = pack.querySelector('.st-emote-pack-controls');
-        assert.ok(row, 'the pack has no shared controls row');
-
-        // Both halves are direct children of the one row, so neither can claim a
-        // line of its own while the 表情 rows below fight over the space.
-        const scopes = pack.querySelector('.st-emote-scopes');
-        const selection = pack.querySelector('.st-emote-selection');
-        assert.equal(scopes.parentElement, row);
-        assert.equal(selection.parentElement, row);
-        assert.deepEqual([...row.children], [scopes, selection]);
-
-        assert.equal(scopes.querySelectorAll('input[type=checkbox]').length, 3);
-        assert.equal(selection.querySelector('input[type=checkbox]') !== null, true);
-        // And they are out of the pack header, which used to push the whole
-        // 作用域 row below the actions it belongs with.
-        assert.equal(row.closest('.st-emote-pack-header'), null);
+        assert.deepEqual([...pack.children].map((child) => child.className), [
+            'st-emote-pack-toggle',
+            'st-emote-pack-body',
+        ]);
+        expandPack(document, 'daily');
+        // The actions are in the body, not in the header: the header is the
+        // identity of the pack plus the switch, and that is all it is.
+        assert.equal(
+            packByName(document, 'daily').querySelector('.st-emote-actions')
+                .closest('.st-emote-pack-body') !== null,
+            true,
+        );
     });
 });
 
@@ -1432,7 +1905,7 @@ test('every action button in the panel carries the one shared action-button clas
     // kind of control. The stylesheet turns that class into the no-wrap rule, so a
     // button added without it would wrap into a tall block again.
     await withPanelMounted({}, ({ document }) => {
-        const buttons = [...document.querySelectorAll('#st_emote_drawer .menu_button')];
+        const buttons = [...document.querySelectorAll('#st_emote_drawer .menu_button, .st-emote-editor .menu_button')];
         assert.ok(buttons.length > 0);
         for (const button of buttons) {
             assert.equal(
@@ -1457,12 +1930,13 @@ test('every class the panel puts on an element is either styled or a declared qu
     // A class no stylesheet knows about is a class the next change cannot find,
     // and the failure shows up as an element quietly looking like the default one.
     //
-    // **Two panel states, not one.** Several classes only exist in some states —
+    // **Three panel states, not one.** Several classes only exist in some states —
     // `st-emote-pack-missing` needs the server to report none of our files,
-    // `st-emote-delete-selected` needs a ticked sticker, `st-emote-input-bad` needs
-    // a refused size value — so a single ordinary render would check a third of
-    // the surface and pass anyway. The two states below are chosen to reach all of
-    // them.
+    // `st-emote-cell-picked` and `st-emote-delete-selected` need 批量 mode with
+    // something ticked, `st-emote-input-bad` needs a refused size value, and every
+    // class of the editor needs a cell clicked — so a single ordinary render would
+    // check a third of the surface and pass anyway. The three states below are
+    // chosen to reach all of them.
     //
     // "Styled" means the class appears in *some* selector, not that it heads one:
     // `.menu_button.st-emote-button` and `.st-emote-actions .st-emote-delete-pack`
@@ -1477,17 +1951,28 @@ test('every class the panel puts on an element is either styled or a declared qu
     const used = new Set();
 
     await withPanelMounted({}, ({ document }) => {
+        expandPack(document, 'daily');
         collectClasses(document, used);
     });
     // The states the plain fixture never reaches.
     await withPanelMounted({ storedFiles: [] }, ({ document }) => {
-        for (const tick of document.querySelectorAll('.st-emote-sticker-tick')) {
-            tick.checked = true;
-            tick.dispatchEvent(new globalThis.window.Event('change'));
+        enterBatchMode(document, 'daily');
+        for (const label of ['happy', 'sad']) {
+            stickerCell(document, 'daily', label).click();
         }
         const size = document.querySelector('.st-emote-size');
         size.value = 'not a size';
         size.dispatchEvent(new globalThis.window.Event('change'));
+        collectClasses(document, used);
+    });
+    // And the editor, which hangs off `document.body` rather than the drawer, so
+    // a scan of the drawer alone would never see a single one of its classes.
+    await withPanelMounted({
+        arrange: (document) => {
+            openEditor(document, 'daily', 'wave');
+            return () => closeStickerEditor();
+        },
+    }, ({ document }) => {
         collectClasses(document, used);
     });
 
@@ -1510,7 +1995,8 @@ test('every class the panel puts on an element is either styled or a declared qu
 // library comes first, that the read-outs report the 生效集 the rest of the
 // extension uses, and that the one action which creates everything else is
 // reachable and says what it is. The control-surface snapshot above is the other
-// half: it is unchanged, so none of this moved, renamed or dropped a control.
+// half: ticket 12 changed it, deliberately and on the record, so this ticket's
+// own claim is the one that is unchanged.
 // ---------------------------------------------------------------------------
 
 test('the library is the first block, and the pack list is above every setting', async () => {
@@ -1561,18 +2047,6 @@ test('the search box and the create row are one toolbar above the list', async (
         assert.match(label.textContent, /New pack name/);
         assert.equal(label.hidden, false, 'the create field has no visible name');
     });
-});
-
-test('the pack list is a bounded scroll box, so the settings stay reachable', async () => {
-    // The failure this prevents is not visible in jsdom and is not visible in the
-    // DOM either: a library of twenty packs is one long column, and the 外观 and
-    // 接入与工具 blocks end up below the fold with nothing to say so. The only
-    // thing a test without a layout engine can check is that the rule exists —
-    // which is worth checking, because deleting it is invisible everywhere else.
-    const rules = readStyleSheet();
-    const packs = rules['.st-emote-packs'] ?? '';
-    assert.match(packs, /max-height:\s*\d/, 'the pack list has no height bound');
-    assert.match(packs, /overflow-y:\s*auto/, 'the pack list does not scroll');
 });
 
 test('the status line reports the 生效集, and follows the 总开关', async () => {
@@ -1632,6 +2106,7 @@ test('the status line follows a 作用域 toggle, which does not rebuild the lis
         const counts = document.getElementById('st_emote_status_counts');
         assert.equal(counts.textContent, '1 pack · 3 stickers');
 
+        expandPack(document, 'zeta');
         const box = packByName(document, 'zeta').querySelector('.st-emote-scopes input');
         assert.equal(box.checked, false);
         box.checked = true;
@@ -1641,6 +2116,10 @@ test('the status line follows a 作用域 toggle, which does not rebuild the lis
         box.checked = false;
         box.dispatchEvent(new globalThis.window.Event('change'));
         assert.equal(counts.textContent, '1 pack · 3 stickers');
+        // And the box that was clicked is still the one on screen, which is the
+        // half of this that only holds while the list is not rebuilt.
+        assert.equal(box.checked, false);
+        assert.equal(box.isConnected, true);
     });
 });
 
@@ -1780,11 +2259,16 @@ test('the first-run card is bilingual, in both states of the library', async () 
     }
 });
 
-test('creating a pack puts it in front of the user', async () => {
+test('creating a pack puts it in front of the user, with its grid already open', async () => {
     // The list is sorted by name, so a new pack lands wherever its name sorts
     // rather than at the end where it was just added. "I pressed the button and
     // nothing happened" is the whole failure, and it is the reason the create row
     // reads as the panel's first action rather than its most puzzling one.
+    //
+    // **Opening it is part of the fix, not decoration.** A closed pack is one line
+    // with nothing on it, so scrolling to it and stopping would land the user in
+    // front of a header; the next thing they have to do is upload, and that
+    // button is inside.
     await withPanelMounted({}, ({ document }) => {
         const name = document.getElementById('st_emote_new_pack');
         name.value = 'beagle';
@@ -1800,18 +2284,22 @@ test('creating a pack puts it in front of the user', async () => {
             created,
             'this pack happened to sort last, so the test proves nothing',
         );
+        assert.equal(created.querySelector('.st-emote-pack-toggle').getAttribute('aria-expanded'), 'true');
+        assert.equal(created.querySelector('.st-emote-pack-body').hidden, false);
+        // Which is where the upload button is.
+        assert.ok(created.querySelector('.st-emote-upload'));
         assert.equal(document.activeElement, created.querySelector('.st-emote-pack-name'));
     });
 });
 
 /**
- * Every `st-emote-*` class in force anywhere under the drawer.
+ * Every `st-emote-*` class in force anywhere under the drawer or the editor.
  *
  * @param {Document} document
  * @param {Set<string>} into
  */
 function collectClasses(document, into) {
-    for (const element of document.querySelectorAll('#st_emote_drawer *')) {
+    for (const element of document.querySelectorAll('#st_emote_drawer *, .st-emote-editor *')) {
         for (const name of element.classList) {
             if (name.startsWith('st-emote')) {
                 into.add(name);
@@ -1876,11 +2364,16 @@ const EXPECTED_ICON_BUTTON_KEYS = {
     'st-emote-add-url': { key: 'pack.addImageUrl' },
     'st-emote-export': { key: 'pack.exportZip' },
     'st-emote-delete-pack': { key: 'pack.deletePack' },
+    // 批量 is one button with two sentences: `pack.batchMode` while it is off and
+    // `pack.batchModeDone` while it is on, and `aria-pressed` says which. Both
+    // are this one handle, so the keys are listed rather than pinned to one.
+    'st-emote-batch': { keys: ['pack.batchMode', 'pack.batchModeDone'] },
     // The count is whichever stickers *this* pack has ticked, so it differs
     // from pack to pack and is matched as a number rather than pinned. The
     // count itself is the subject of the batch-delete test above; what matters
     // here is that the sentence is still this key and not a new one.
     'st-emote-delete-selected': { key: 'pack.deleteSelected', count: /\d+/ },
+    'st-emote-editor-close': { key: 'sticker.closeEditor' },
     'st-emote-replace': { key: 'sticker.replace' },
     'st-emote-sticker-delete': { key: 'sticker.delete' },
     '#st_emote_preview_run': { key: 'panel.previewRun' },
@@ -1891,13 +2384,15 @@ const EXPECTED_ICON_BUTTON_KEYS = {
  * Classes the panel applies to be *found* rather than to be styled: the
  * per-action query hooks a test clicks (`.st-emote-export`), `st-emote-badge-empty`
  * (the one state with nothing extra to say, so it needs no colour of its own), and
- * the two containers that carry an id and no appearance of their own —
- * `st-emote-sizes` (filled by `adapter/sizing-panel.js`) and the
- * `st-emote-missing` block (also identified by its id, and its visible parts are
- * styled individually).
+ * the containers that carry an id and no appearance of their own —
+ * `st-emote-packs` (the list itself; its parts are styled one by one, and it is as
+ * tall as the library is long), `st-emote-sizes` (filled by
+ * `adapter/sizing-panel.js`) and the `st-emote-missing` block (also identified by
+ * its id, and its visible parts are styled individually).
  *
- * `st-emote-packs` used to be the third of that kind. It is a scroll box now
- * (ticket 13), so it is styled and lives in `style.css` like everything else.
+ * `st-emote-packs` was styled for a while (ticket 13 made it a scroll box, so
+ * that the settings below it stayed put) and is a query hook again since the
+ * panel scrolls as one column.
  *
  * Every other `st-emote-*` class the panel applies must have a rule, which is what
  * the test above enforces — over two panel states, so the conditional ones count.
@@ -1906,8 +2401,10 @@ const QUERY_HOOKS = [
     'st-emote-add-url',
     'st-emote-badge-empty',
     'st-emote-delete-selected',
+    'st-emote-editor-close',
     'st-emote-export',
     'st-emote-missing',
+    'st-emote-packs',
     'st-emote-replace',
     'st-emote-sizes',
     'st-emote-sticker-delete',
@@ -1922,69 +2419,39 @@ const QUERY_HOOKS = [
  * is what makes it a layout snapshot rather than a bag of strings — two 尺寸集
  * with the same seven fields are told apart by which set they are in, two
  * buttons that both say "Delete" are told apart by the 表情 they act on.
+ *
+ * **Ticket 12 moved the control set, and this is the diff.** The lines saying
+ * `pack "…" / sticker "…"` are gone: those controls moved into the editor. What
+ * arrived instead is one `st-emote-batch` per pack and the `selection bar`, and
+ * what a closed pack costs is now one line — its 包名, and nothing else. Nothing
+ * was renamed and nothing that could act on a 表情 left the panel; the fields for
+ * a 表情 are in `EXPECTED_EDITOR_SURFACE` below, which is a snapshot of the same
+ * list read with an editor open.
+ *
+ * **The state it is read in: one pack open, 批量 mode on, two stickers ticked.**
+ * That is the state that shows the most of the panel at once, and every state
+ * that adds a control — an open pack, 批量 mode, a tick — is in it. The editor is
+ * the one exception, and it cannot be: 批量 mode turns a cell into a checkbox, so
+ * a panel cannot be in both at once. Hence the second list.
  */
 const EXPECTED_CONTROL_SURFACE = [
     'debug area :: div#st_emote_preview_run.menu_button "Render"',
     'debug area :: div#st_emote_rerender.menu_button "Re-render the current chat"',
     'debug area :: textarea#st_emote_preview.text_pole "Paste a message, e.g. She smiles. [[sticker:daily:happy]]"',
-    'pack "blank" / header :: div.menu_button.st-emote-add-url "Add image URL"',
-    'pack "blank" / header :: div.menu_button.st-emote-delete-pack "Delete pack"',
-    'pack "blank" / header :: div.menu_button.st-emote-export "Export .zip"',
-    'pack "blank" / header :: div.menu_button.st-emote-upload "Upload images"',
-    'pack "blank" / header :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
     'pack "blank" / header :: input[text].st-emote-pack-name.text_pole "blank"',
-    'pack "blank" / selection bar :: input[checkbox] "Select all"',
-    'pack "blank" / 作用域 :: input[checkbox] "Character"',
-    'pack "blank" / 作用域 :: input[checkbox] "Chat"',
-    'pack "blank" / 作用域 :: input[checkbox] "Global"',
-    'pack "daily" / header :: div.menu_button.st-emote-add-url "Add image URL"',
-    'pack "daily" / header :: div.menu_button.st-emote-delete-pack "Delete pack"',
-    'pack "daily" / header :: div.menu_button.st-emote-export "Export .zip"',
-    'pack "daily" / header :: div.menu_button.st-emote-upload "Upload images"',
-    'pack "daily" / header :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
+    'pack "daily" / actions :: div.menu_button.st-emote-add-url "Add image URL"',
+    'pack "daily" / actions :: div.menu_button.st-emote-batch "Stop selecting stickers"',
+    'pack "daily" / actions :: div.menu_button.st-emote-delete-pack "Delete pack"',
+    'pack "daily" / actions :: div.menu_button.st-emote-export "Export .zip"',
+    'pack "daily" / actions :: div.menu_button.st-emote-upload "Upload images"',
+    'pack "daily" / actions :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
     'pack "daily" / header :: input[text].st-emote-pack-name.text_pole "daily"',
+    'pack "daily" / selection bar :: div.menu_button.st-emote-delete-selected "Delete 2 selected"',
     'pack "daily" / selection bar :: input[checkbox] "Select all"',
-    'pack "daily" / sticker "happy" :: div.menu_button.st-emote-replace "Replace"',
-    'pack "daily" / sticker "happy" :: div.menu_button.st-emote-sticker-delete "Delete"',
-    'pack "daily" / sticker "happy" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
-    'pack "daily" / sticker "happy" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
-    'pack "daily" / sticker "happy" :: input[text].st-emote-description.text_pole "—"',
-    'pack "daily" / sticker "happy" :: input[text].st-emote-label.text_pole "Label"',
-    'pack "daily" / sticker "happy" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
-    'pack "daily" / sticker "sad" :: div.menu_button.st-emote-replace "Replace"',
-    'pack "daily" / sticker "sad" :: div.menu_button.st-emote-sticker-delete "Delete"',
-    'pack "daily" / sticker "sad" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
-    'pack "daily" / sticker "sad" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
-    'pack "daily" / sticker "sad" :: input[text].st-emote-description.text_pole "—"',
-    'pack "daily" / sticker "sad" :: input[text].st-emote-label.text_pole "Label"',
-    'pack "daily" / sticker "sad" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
-    'pack "daily" / sticker "wave" :: div.menu_button.st-emote-replace "Replace"',
-    'pack "daily" / sticker "wave" :: div.menu_button.st-emote-sticker-delete "Delete"',
-    'pack "daily" / sticker "wave" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
-    'pack "daily" / sticker "wave" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
-    'pack "daily" / sticker "wave" :: input[text].st-emote-description.text_pole "—"',
-    'pack "daily" / sticker "wave" :: input[text].st-emote-label.text_pole "Label"',
-    'pack "daily" / sticker "wave" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
     'pack "daily" / 作用域 :: input[checkbox] "Character"',
     'pack "daily" / 作用域 :: input[checkbox] "Chat"',
     'pack "daily" / 作用域 :: input[checkbox] "Global"',
-    'pack "zeta" / header :: div.menu_button.st-emote-add-url "Add image URL"',
-    'pack "zeta" / header :: div.menu_button.st-emote-delete-pack "Delete pack"',
-    'pack "zeta" / header :: div.menu_button.st-emote-export "Export .zip"',
-    'pack "zeta" / header :: div.menu_button.st-emote-upload "Upload images"',
-    'pack "zeta" / header :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
     'pack "zeta" / header :: input[text].st-emote-pack-name.text_pole "zeta"',
-    'pack "zeta" / selection bar :: input[checkbox] "Select all"',
-    'pack "zeta" / sticker "zappy" :: div.menu_button.st-emote-replace "Replace"',
-    'pack "zeta" / sticker "zappy" :: div.menu_button.st-emote-sticker-delete "Delete"',
-    'pack "zeta" / sticker "zappy" :: input[checkbox].st-emote-sticker-tick "Select for a batch delete"',
-    'pack "zeta" / sticker "zappy" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
-    'pack "zeta" / sticker "zappy" :: input[text].st-emote-description.text_pole "—"',
-    'pack "zeta" / sticker "zappy" :: input[text].st-emote-label.text_pole "Label"',
-    'pack "zeta" / sticker "zappy" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
-    'pack "zeta" / 作用域 :: input[checkbox] "Character"',
-    'pack "zeta" / 作用域 :: input[checkbox] "Chat"',
-    'pack "zeta" / 作用域 :: input[checkbox] "Global"',
     'settings :: div#st_emote_copy_regex.menu_button "Copy regex JSON"',
     'settings :: div#st_emote_create_pack.menu_button "Create pack"',
     'settings :: div#st_emote_import_pack.menu_button "Import pack (.zip)"',
@@ -2014,6 +2481,67 @@ const EXPECTED_CONTROL_SURFACE = [
 ];
 
 /**
+ * The same list with an editor open: a pack expanded, one sticker clicked, and
+ * its 标签, 描述, 投放方式 override, replace, delete and close on screen.
+ *
+ * **A second list rather than a second section of the first**, because the two
+ * states are mutually exclusive — 批量 mode turns the cell into a checkbox — and
+ * one list assembled from both would describe a panel no user has ever seen.
+ * Read the two together and they answer "can I still do everything I could before
+ * ticket 12": yes, one sticker at a time.
+ */
+const EXPECTED_EDITOR_SURFACE = [
+    'debug area :: div#st_emote_preview_run.menu_button "Render"',
+    'debug area :: div#st_emote_rerender.menu_button "Re-render the current chat"',
+    'debug area :: textarea#st_emote_preview.text_pole "Paste a message, e.g. She smiles. [[sticker:daily:happy]]"',
+    'pack "blank" / header :: input[text].st-emote-pack-name.text_pole "blank"',
+    'pack "daily" / actions :: div.menu_button.st-emote-add-url "Add image URL"',
+    'pack "daily" / actions :: div.menu_button.st-emote-batch "Select stickers"',
+    'pack "daily" / actions :: div.menu_button.st-emote-delete-pack "Delete pack"',
+    'pack "daily" / actions :: div.menu_button.st-emote-export "Export .zip"',
+    'pack "daily" / actions :: div.menu_button.st-emote-upload "Upload images"',
+    'pack "daily" / actions :: input[file][image/png,image/jpeg,image/webp,image/gif multiple] (no caption)',
+    'pack "daily" / header :: input[text].st-emote-pack-name.text_pole "daily"',
+    'pack "daily" / 作用域 :: input[checkbox] "Character"',
+    'pack "daily" / 作用域 :: input[checkbox] "Chat"',
+    'pack "daily" / 作用域 :: input[checkbox] "Global"',
+    'pack "zeta" / header :: input[text].st-emote-pack-name.text_pole "zeta"',
+    'settings :: div#st_emote_copy_regex.menu_button "Copy regex JSON"',
+    'settings :: div#st_emote_create_pack.menu_button "Create pack"',
+    'settings :: div#st_emote_import_pack.menu_button "Import pack (.zip)"',
+    'settings :: input[checkbox]#st_emote_bracket_form "Bracket form: [[sticker:pack:label]]"',
+    'settings :: input[checkbox]#st_emote_enabled "Master switch: render stickers"',
+    'settings :: input[checkbox]#st_emote_render_user "Render stickers in user messages"',
+    'settings :: input[checkbox]#st_emote_tag_form "HTML tag form: the tag name below, wrapping pack:label"',
+    'settings :: input[file][.zip,application/zip single] (no caption)',
+    'settings :: input[text]#st_emote_new_pack.text_pole "New pack name"',
+    'settings :: input[text]#st_emote_search.text_pole "Search labels and descriptions"',
+    'settings :: input[text]#st_emote_tag_name.text_pole "HTML tag form:"',
+    'settings :: select#st_emote_placement.text_pole[in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement"',
+    'sticker editor "happy" :: div.menu_button.st-emote-editor-close "Close"',
+    'sticker editor "happy" :: div.menu_button.st-emote-replace "Replace"',
+    'sticker editor "happy" :: div.menu_button.st-emote-sticker-delete "Delete"',
+    'sticker editor "happy" :: input[file][image/png,image/jpeg,image/webp,image/gif single] (no caption)',
+    'sticker editor "happy" :: input[text].st-emote-description.text_pole "—"',
+    'sticker editor "happy" :: input[text].st-emote-label.text_pole "Label"',
+    'sticker editor "happy" :: select.st-emote-sticker-placement.text_pole[="Follow the global setting" | in-place="In place" | after-block="After the block" | message-end="End of message"] "Placement override for this sticker"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Gap between stickers (left/right)"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Gap between stickers (top/bottom)"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Max height"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Max width"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Min height"',
+    '尺寸集 "Block size (after the block / end of message)" :: input[text].st-emote-size.text_pole "Min width"',
+    '尺寸集 "Block size (after the block / end of message)" :: select.st-emote-size.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Gap between stickers (left/right)"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Gap between stickers (top/bottom)"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Max height"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Max width"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Min height"',
+    '尺寸集 "Inline size (in place)" :: input[text].st-emote-size.text_pole "Min width"',
+    '尺寸集 "Inline size (in place)" :: select.st-emote-size.text_pole[="default" | cover="cover" | contain="contain" | fill="fill"] "Fill"',
+];
+
+/**
  * Where in the panel a control sits, named by the thing it belongs to rather
  * than by its position in the tree — so a reflow that moves a control from one
  * row to another is visible in the surface but a reflow that only nests it
@@ -2023,21 +2551,25 @@ const EXPECTED_CONTROL_SURFACE = [
  * @returns {string}
  */
 function controlRegion(element) {
+    // The editor first: it hangs off `document.body`, so it is not inside any
+    // pack, and its dialog label is the one fact that says which sticker it is
+    // about. `aria-label` rather than a `data-` of our own, because the dialog
+    // already has to carry that sentence for a screen reader.
+    const editor = element.closest('.st-emote-editor');
+    if (editor) {
+        return `sticker editor "${editor.getAttribute('aria-label') ?? '?'}"`;
+    }
     const pack = element.closest('.st-emote-pack');
     if (pack) {
         const name = pack.querySelector('.st-emote-pack-name')?.value ?? '?';
-        const row = element.closest('.st-emote-sticker');
-        if (row) {
-            const label = row.querySelector('.st-emote-label')?.value;
-            return label === undefined
-                ? `pack "${name}" / sticker with no label input`
-                : `pack "${name}" / sticker "${label}"`;
-        }
         if (element.closest('.st-emote-scopes')) {
             return `pack "${name}" / 作用域`;
         }
         if (element.closest('.st-emote-selection')) {
             return `pack "${name}" / selection bar`;
+        }
+        if (element.closest('.st-emote-actions')) {
+            return `pack "${name}" / actions`;
         }
         return `pack "${name}" / header`;
     }
@@ -2118,17 +2650,34 @@ function controlDetails(element) {
 }
 
 /**
+ * Every element on the panel a user can operate, wherever it lives.
+ *
+ * **The editor is in this list, not left out of it.** A control surface that only
+ * covered the drawer would report "the panel has no way to rename a 标签" the
+ * moment those fields moved into a layer over it — which is exactly the kind of
+ * change a snapshot is supposed to make visible rather than absorb.
+ */
+const PANEL_CONTROLS = [
+    '#st_emote_drawer input',
+    '#st_emote_drawer select',
+    '#st_emote_drawer textarea',
+    '#st_emote_drawer .menu_button',
+    '.st-emote-editor input',
+    '.st-emote-editor select',
+    '.st-emote-editor .menu_button',
+].join(', ');
+
+/**
  * The whole panel's control surface as sorted lines. Every element a user can
- * operate is in: inputs, selects, the debug box, and the client's `.menu_button`
- * which is a `<div>` this extension paints rather than a real `<button>`.
+ * operate is in: inputs, selects, the debug box, the client's `.menu_button`
+ * which is a `<div>` this extension paints rather than a real `<button>`, and
+ * the editor layer that hangs off `document.body`.
  *
  * @param {Document} document
  * @returns {string[]}
  */
 function controlSurface(document) {
-    return [...document.querySelectorAll(
-        '#st_emote_drawer input, #st_emote_drawer select, #st_emote_drawer textarea, #st_emote_drawer .menu_button',
-    )].map((element) => {
+    return [...document.querySelectorAll(PANEL_CONTROLS)].map((element) => {
         const type = element.getAttribute('type') ?? '';
         const classes = [...element.classList]
             .filter((name) => !PRESENTATION_HOOKS.includes(name))
@@ -2212,18 +2761,43 @@ async function panelText(options) {
 /**
  * The panel states between them reach every button the panel can draw.
  *
- * Three, not one, and for the same reason the class-coverage test above uses
- * two: several buttons exist only in some states. `deleteSelected` needs a
- * ticked sticker; `createMissingPacks` needs a character card naming a pack
- * that is not installed. A single ordinary render would check a third of the
- * icon table and pass anyway, and the orphan half of the test above would then
- * be asserting against a partial `drawn` set.
+ * Five, not one, and for the same reason the class-coverage test above uses
+ * three: several buttons exist only in some states. `deleteSelected` needs a
+ * ticked sticker in 批量 mode; `export` and `deletePack` need an open pack;
+ * `replace` and `deleteSticker` need an open editor; `createMissingPacks` needs a
+ * character card naming a pack that is not installed. A single ordinary render
+ * would check a third of the icon table and pass anyway, and the orphan half of
+ * the test above would then be asserting against a partial `drawn` set.
  *
  * @returns {{options: object}[]}
  */
 function iconButtonStates() {
     return [
         { options: {} },
+        {
+            // One pack open: the two actions that live inside a pack's body, and
+            // the 批量 switch on its way in and on its way out.
+            options: { arrange: (document) => {
+                expandPack(document, 'daily');
+                packByName(document, 'daily').querySelector('.st-emote-batch').click();
+            } },
+        },
+        {
+            // And with something ticked, which is the only way the batch delete is
+            // ever drawn.
+            options: { arrange: (document) => {
+                enterBatchMode(document, 'daily');
+                stickerCell(document, 'daily', 'happy').click();
+            } },
+        },
+        {
+            // The editor, which hangs off `document.body`: the replace, the delete
+            // and the close button exist nowhere else.
+            options: { arrange: (document) => {
+                openEditor(document, 'daily', 'happy');
+                return () => closeStickerEditor();
+            } },
+        },
         { options: { storedFiles: [] } },
         {
             options: {
@@ -2234,27 +2808,6 @@ function iconButtonStates() {
                         data: { extensions: { [STORAGE_KEY]: { enabledPackNames: ['not-installed'] } } },
                     }],
                     chat: [{ mes: 'hi', original_avatar: 'someone.png' }],
-                },
-            },
-        },
-        {
-            // `deleteSelected` exists only while something is ticked, and each
-            // tick rebuilds the pack list — so this is the state where it has to
-            // be caught, and the only way to catch it at all. Un-ticking is the
-            // same code path in reverse, which also exercises it.
-            options: {
-                arrange: (document) => {
-                    const ticks = [...document.querySelectorAll('.st-emote-sticker-tick')];
-                    for (const tick of ticks) {
-                        tick.checked = true;
-                        tick.dispatchEvent(new globalThis.window.Event('change'));
-                    }
-                    return () => {
-                        for (const tick of document.querySelectorAll('.st-emote-sticker-tick')) {
-                            tick.checked = false;
-                            tick.dispatchEvent(new globalThis.window.Event('change'));
-                        }
-                    };
                 },
             },
         },
@@ -2363,14 +2916,59 @@ function packByName(document, name) {
 }
 
 /**
+ * Open a pack's grid by clicking its header — the same click a user makes, so a
+ * test that skipped this would be testing a state no user is ever in.
+ *
+ * @param {Document} document
+ * @param {string} packName
+ * @returns {Element} The pack's body, which is where the grid went.
+ */
+function expandPack(document, packName) {
+    const pack = packByName(document, packName);
+    const toggle = pack.querySelector('.st-emote-pack-toggle');
+    if (toggle.getAttribute('aria-expanded') !== 'true') {
+        toggle.click();
+    }
+    return pack.querySelector('.st-emote-pack-body');
+}
+
+/**
+ * One grid cell, by the 标签 the cell says out loud.
+ *
  * @param {Document} document
  * @param {string} packName
  * @param {string} label
  * @returns {Element}
  */
-function stickerRow(document, packName, label) {
-    return [...packByName(document, packName).querySelectorAll('.st-emote-sticker')]
-        .find((row) => row.querySelector('.st-emote-label').value === label);
+function stickerCell(document, packName, label) {
+    return [...packByName(document, packName).querySelectorAll('.st-emote-cell')]
+        .find((cell) => cell.dataset.label === label) ?? null;
+}
+
+/**
+ * Open one sticker's editor: click its cell, which is the only way in.
+ *
+ * @param {Document} document
+ * @param {string} packName
+ * @param {string} label
+ * @returns {Element} The editor layer.
+ */
+function openEditor(document, packName, label) {
+    expandPack(document, packName);
+    stickerCell(document, packName, label).click();
+    return document.querySelector('.st-emote-editor');
+}
+
+/**
+ * Enter one pack's 批量 mode, which is also the only way the batch bar and the
+ * "delete selected" button are ever on screen.
+ *
+ * @param {Document} document
+ * @param {string} packName
+ */
+function enterBatchMode(document, packName) {
+    expandPack(document, packName);
+    packByName(document, packName).querySelector('.st-emote-batch').click();
 }
 
 /**

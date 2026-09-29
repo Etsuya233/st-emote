@@ -47,8 +47,18 @@
  * Everything that used to be a flat `margin-bottom: 8px` all the way down is one
  * of these two now, so the panel reads as blocks rather than as one long stream
  * of equal-density controls.
+ *
+ * **Declared on `body`, not on `#st_emote_drawer`.** The sticker editor hangs
+ * off `document.body` rather than off the panel (see `.st-emote-editor` below),
+ * so the two surfaces are siblings rather than one inside the other — and a
+ * custom property scoped to the drawer simply does not reach the dialog. A
+ * `gap: var(--st-emote-gap)` there resolves to `normal`, which is `0`: the
+ * dialog's fields end up spaced by whatever margin the client's own
+ * `.text_pole` happens to carry, and the panel and the dialog quietly disagree
+ * about the same number. Both are under `body`, so `body` is the one place
+ * they can both inherit from.
  */
-#st_emote_drawer {
+body {
     --st-emote-gap: 6px;
     --st-emote-space: 12px;
 }
@@ -406,6 +416,18 @@
     pointer-events: none;
 }
 
+/*
+ * A glyph worn by something that is not a button — a grid cell's corner mark. It
+ * shares the metrics with `.st-emote-icon` so the two kinds of glyph on the panel
+ * are the same size, and it is hidden from the pointer so a mark over a corner of
+ * a picture does not steal the cell's own click.
+ */
+.st-emote-mark {
+    font-size: 0.95em;
+    line-height: 1;
+    pointer-events: none;
+}
+
 .st-emote-create .text_pole,
 .st-emote-import .text_pole {
     flex: 1;
@@ -549,28 +571,6 @@
     box-sizing: border-box;
 }
 
-/*
- * The pack list's own scroll box.
- *
- * **The list is the panel's content, and content is what scrolls.** Left to run
- * as one long column, a library of twenty packs pushes the three settings blocks
- * and the tools off the bottom of the panel, and reaching a size setting then
- * means scrolling past everything — which is how the panel ended up reading as
- * "settings, and something at the far end". Bounded here, the settings stay
- * where they are however big the library gets, and the search box and the create
- * row stay outside the box so they are always the same two rows under the title.
- *
- * `overscroll-behavior` is what stops the list from handing the leftover scroll
- * to the panel behind it: reaching the end of the library scrolls the panel,
- * which is what a user reaching the end of a list expects to have to do twice
- * for.
- */
-.st-emote-packs {
-    max-height: 55vh;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-}
-
 .st-emote-import {
     display: flex;
     gap: 6px;
@@ -579,15 +579,61 @@
 }
 
 /*
- * A pack. The `margin-top` between packs is the panel's larger step, so a pack is
- * a block rather than one more line of a list — while the padding and the gaps
- * inside it stay at the small one.
+ * A pack, as one header row and a grid underneath it.
+ *
+ * **A closed pack is one line.** Everything else — the actions, the 作用域, the
+ * grid — is inside `.st-emote-pack-body`, which is `hidden` until the header is
+ * clicked. That is what makes the list readable at twenty packs rather than at
+ * two: the eye scans twenty headers instead of twenty times six rows.
+ *
+ * The `margin-top` between packs is the panel's larger step, so a pack is a block
+ * rather than one more line of a list — while the padding and the gaps inside it
+ * stay at the small one.
  */
 .st-emote-pack {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
-    padding: 8px;
+    padding: 6px 8px;
     margin-top: var(--st-emote-space);
+}
+
+/*
+ * The header: the pack's identity, and the switch that opens the grid.
+ *
+ * A `role=button` rather than the client's `inline-drawer-toggle`, because the
+ * client delegates a click on that from `document` — a header holding a text
+ * input would slide the drawer open on every keystroke's click, and the header's
+ * own styling (bold, padded, a whole row of its own) is the wrong shape for the
+ * dense row this is. See `.scratch/st-emote/issues/12-sticker-grid-and-modal-editor.md`.
+ */
+.st-emote-pack-toggle {
+    display: flex;
+    gap: var(--st-emote-gap);
+    align-items: center;
+    flex-wrap: wrap;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+/*
+ * The header's own focus ring. The client's `:focus-visible` outline is drawn on
+ * `:focus`, which a mouse click also sets — so the ring is suppressed and put
+ * back for the keyboard, where it is the only thing saying where you are.
+ */
+.st-emote-pack-toggle:focus {
+    outline: none;
+}
+
+.st-emote-pack-toggle:focus-visible {
+    outline: 1px solid var(--SmartThemeBorderColor);
+    outline-offset: 2px;
+}
+
+.st-emote-pack-chevron {
+    margin-left: auto;
+    flex-shrink: 0;
+    opacity: 0.7;
+    font-size: 0.85em;
 }
 
 .st-emote-pack:first-child {
@@ -609,25 +655,8 @@
 }
 
 /*
- * A pack's header, in the order the eye should take it: cover (fixed), 包名 (the
- * only primary control in the pack, so it gets the slack), the count and any state
- * badge (both already `opacity: 0.7`–0.8), then the actions.
- *
- * `align-items: center` on a wrapping header used to leave a ragged row: one
- * button that wrapped to four lines made the whole row that tall. With the
- * actions in their own wrapping group the header's own line height stays one
- * button tall however many lines a label takes.
- */
-.st-emote-pack-header {
-    display: flex;
-    gap: var(--st-emote-gap);
-    align-items: center;
-    flex-wrap: wrap;
-}
-
-/*
  * A group of action buttons. **The group wraps; a button does not.** A label that
- * cannot fit moves to the next line whole, which is what keeps four buttons from
+ * cannot fit moves to the next line whole, which is what keeps five buttons from
  * scattering into a staircase of different heights.
  */
 .st-emote-actions {
@@ -670,6 +699,19 @@
     gap: var(--st-emote-gap) 14px;
     align-items: center;
     margin-top: var(--st-emote-gap);
+}
+
+/*
+ * The open part of a pack: the actions, the 作用域 row, and the grid. No own
+ * spacing of its own — every gap inside it is one of the panel's two steps, so a
+ * pack's inside does not grow a rhythm of its own.
+ */
+.st-emote-pack-body > * {
+    margin-top: var(--st-emote-gap);
+}
+
+.st-emote-pack-body > *:first-child {
+    margin-top: 0;
 }
 
 /*
@@ -720,65 +762,296 @@
 }
 
 /*
- * The pack's stickers. The gap *between* rows is the panel's small step and the
- * gap *within* a row is smaller still, so a sticker reads as one thing with two
- * lines rather than as two separate rows.
+ * The pack's stickers, as a grid of fixed-size squares.
+ *
+ * **`auto-fill` with a fixed `minmax`, not a column count.** The panel is a
+ * sidebar that runs from about 300px to twice that, and a written-down column
+ * count either bursts in the narrow case or stretches into a picket fence in the
+ * wide one. A fixed cell size gives the same number of stickers per row at every
+ * width the panel can actually be — four across at 320px, six at 500px — and the
+ * cells stay square at both.
+ *
+ * The gap is the panel's small step, the same one every other pair of things in
+ * a block is separated by, so a cell does not read as a tile with its own
+ * spacing rules.
  */
 .st-emote-stickers {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
     gap: var(--st-emote-gap);
-    margin-top: var(--st-emote-gap);
-}
-
-/* A sticker, as two rows: 标识 on top, 内容 below. See `buildStickerElement`. */
-.st-emote-sticker {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.st-emote-sticker-main,
-.st-emote-sticker-detail {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    min-width: 0;
-}
-
-.st-emote-sticker-tick {
-    flex-shrink: 0;
-}
-
-.st-emote-thumb {
-    width: 40px;
-    height: 40px;
-    object-fit: contain;
-    border-radius: 3px;
-    background: rgba(0, 0, 0, 0.2);
-    flex-shrink: 0;
-}
-
-.st-emote-thumb-missing {
-    border: 1px dashed var(--SmartThemeBorderColor);
 }
 
 /*
- * The 标签 is the 标识 and gets the row's slack; the 描述 is content and spans
- * the whole width of its own row. `min-width: 0` on both is what lets an input
- * shrink past its own content width — without it a flex item's automatic minimum
- * size is its content, so the input stays wide enough for the longest label ever
- * typed into it and overflows the row instead. That, not the `flex: 2` vs
- * `flex: 1` ratio, is why the description used to read as "测试表情,详".
+ * One cell: the picture, and the 标签 under it. Nothing else.
+ *
+ * The 标签 stays on the cell because it is the 标识 — it is what a token names,
+ * so it is the one thing a user scans this grid *for*. Everything else a sticker
+ * has lives in the editor, which is why the grid is readable at a glance and why
+ * a pack of fifty stickers is eight rows rather than a hundred.
  */
-.st-emote-label {
-    flex: 1 1 8em;
+.st-emote-cell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
     min-width: 0;
 }
 
+.st-emote-cell:hover {
+    border-color: var(--SmartThemeBorderColor);
+}
+
+.st-emote-cell:focus {
+    outline: none;
+}
+
+.st-emote-cell:focus-visible {
+    outline: 1px solid var(--SmartThemeBorderColor);
+    outline-offset: 1px;
+}
+
+/*
+ * A ticked cell in 批量 mode. The border is the same one the hover uses, one step
+ * further from the background: a cell you have selected should read as selected
+ * with the pointer anywhere on the grid, not only while it is over that cell.
+ */
+.st-emote-cell-picked {
+    border-color: var(--SmartThemeQuoteColor, #c0392b);
+}
+
+/*
+ * The picture, square and contained. `background` is what a transparent sticker
+ * sits on — without it a PNG with a transparent background is a hole in the grid
+ * and the cell's own bounds stop being visible at all.
+ */
+.st-emote-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: contain;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+/*
+ * A sticker with no picture: the dashed outline the panel has always used for
+ * "this file did not travel", with a question mark so the cell still says
+ * something at 56px.
+ */
+.st-emote-thumb-missing {
+    border: 1px dashed var(--SmartThemeBorderColor);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+}
+
+/*
+ * The 标签, one line, clipped rather than wrapped: a cell that grows to two lines
+ * of caption makes every cell in its row two lines tall, and the grid stops being
+ * a grid. The full 标签 and the 描述 are in the cell's tooltip.
+ */
+.st-emote-cell-label {
+    font-size: 0.8em;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.85;
+}
+
+/*
+ * The two corner marks. Both sit outside the picture's own square so they never
+ * cover part of a sticker the user is trying to recognise.
+ */
+.st-emote-cell-external {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    font-size: 0.75em;
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.st-emote-cell-pick {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    font-size: 0.75em;
+    pointer-events: none;
+}
+
+/*
+ * The 批量 switch, lit while it is on. The glyph is the same either way — a
+ * toggle button's state is `aria-pressed` and this, not a different picture.
+ */
+.st-emote-batch[aria-pressed='true'] {
+    background: var(--SmartThemeQuoteColor, #c0392b);
+    border-color: var(--SmartThemeQuoteColor, #c0392b);
+    color: #fff;
+}
+
+/*
+ * The 标签 and the 描述 fields, which live in the editor and nowhere else. They
+ * share the width rule with the hand-typed settings beside them so the dialog
+ * reads as one column of fields rather than three of unrelated shapes.
+ */
+.st-emote-label,
 .st-emote-description {
-    flex: 1 1 12em;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/*
+ * The editor: a fixed layer over the whole page, with the card centred inside it.
+ *
+ * **The layer is `position: fixed` and hangs off `document.body`.** The panel
+ * lives inside the client's `.drawer-content`, and that element is a clipping
+ * box (`overflow-y: auto` under a `max-height`) *and* carries a
+ * `backdrop-filter` — which makes it the containing block for any fixed
+ * descendant, so a layer mounted there would be laid out against the drawer and
+ * cut off by it rather than centred on the screen. `width: min()` is the whole of
+ * the responsive story: one card that fits a 300px sidebar and does not become a
+ * letterbox in a wide window.
+ *
+ * **The `z-index` is 10000 because the layer is a child of `body`.** Being a
+ * child of `body` is what puts it outside every panel clipping box, and it is
+ * also what makes it compete in the root stacking context with the client's own
+ * top-level surfaces. The one that matters is `#top-settings-holder`: the
+ * extensions drawer this panel lives in hangs off it, and it is
+ * `position: relative; z-index: 3005` — 4005 while a drawer is open, which is
+ * exactly the state the editor is opened in. A layer at the usual `z-index:
+ * 1000` therefore paints *underneath* the drawer that summoned it, seen through
+ * the drawer's translucent blurred background: a washed-out card that looks
+ * broken rather than a dialog that looks misplaced. 10000 is the level the
+ * client itself floats its overlays at (`#dialogue_popup` and friends sit at
+ * 9999), so this outranks every drawer without having to guess at a number.
+ */
+.st-emote-editor {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+.st-emote-editor-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.st-emote-editor-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--st-emote-gap);
+    width: min(22em, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    padding: 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    /*
+     * The client's own surface pair, and the two halves of it stated together.
+     * `--SmartThemeBlurTintColor` over `--SmartThemeBodyColor` is what every
+     * floating box the client draws is made of — the extensions drawer this
+     * panel lives in, its popups — so the dialog is the same material as the
+     * panel behind it, and it is readable in a light theme and a dark one
+     * alike.
+     *
+     * **The text colour is set here rather than left to `body`.** A card
+     * backgrounded with one theme variable and inheriting its text colour from
+     * `body` is text drawn in its own colour: `body` is `color:
+     * var(--SmartThemeBodyColor)`, so the 标签 at the top of the dialog, the
+     * badges and every unclassed span in it would vanish against the box. Both
+     * variables are among the ones `body` itself is built from, so they are as
+     * safe to depend on as any.
+     */
+    background: var(--SmartThemeBlurTintColor, #171717);
+    color: var(--SmartThemeBodyColor, rgb(220, 220, 210));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.st-emote-editor-head {
+    display: flex;
+    gap: var(--st-emote-gap);
+    align-items: center;
+}
+
+.st-emote-editor-preview {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.st-emote-editor-preview-empty {
+    border: 1px dashed var(--SmartThemeBorderColor);
+    opacity: 0.7;
+}
+
+.st-emote-editor-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+/*
+ * The sticker's 标签 as the dialog's title, with the badges that were words in
+ * the grid's corner marks. It takes the slack; the close button does not.
+ */
+.st-emote-editor-heading {
+    flex: 1;
     min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+}
+
+.st-emote-editor-name {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.st-emote-editor-close {
+    flex-shrink: 0;
+}
+
+.st-emote-editor-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--st-emote-gap);
+}
+
+/*
+ * The 投放方式 select, in the one place its panel sizing does not fit.
+ *
+ * `.st-emote-sticker-placement` is `flex: 0 1 9em` because on the panel it sits
+ * in a *row* next to its 尺寸集, and there the basis is its width. The dialog's
+ * body is a *column*, where a flex basis is a height: the same declaration
+ * stretches the select into a 9em-tall box with one line of text in the middle
+ * of it. Undoing the basis here is what puts it back in line with the two fields
+ * above it.
+ */
+.st-emote-editor-body .st-emote-sticker-placement {
+    flex: 0 0 auto;
+    width: 100%;
 }
 
 .st-emote-badge {

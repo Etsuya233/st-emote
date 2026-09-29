@@ -186,6 +186,15 @@ const EN = {
     'pack.searchDeleteHint': 'Clear the search to delete selected stickers.',
     'pack.renamed': 'Renamed to "{name}". Tokens using the old name no longer match.',
     'pack.nameTaken': 'A pack named "{name}" already exists.',
+    // The pack header doubles as the accordion switch (ticket 12), so the header
+    // has to say which way the click goes — one sentence per direction rather
+    // than a neutral "stickers", because the row it sits in is already full.
+    'pack.expand': 'Show this pack\'s stickers',
+    'pack.collapse': 'Hide this pack\'s stickers',
+    // Batch is a *mode*, so the button names the state it switches into and the
+    // state it switches out of. One glyph either way; `aria-pressed` says which.
+    'pack.batchMode': 'Select stickers',
+    'pack.batchModeDone': 'Stop selecting stickers',
 
     // ── one sticker in a pack ──────────────────────────────────────────────
     'sticker.selectForDelete': 'Select for a batch delete',
@@ -197,6 +206,18 @@ const EN = {
     'sticker.delete': 'Delete',
     'sticker.renamed': 'Label is now "{name}". Tokens using the old label no longer match.',
     'sticker.labelTaken': 'This pack already has a sticker labelled "{name}".',
+    // The grid cell is the whole default surface of one sticker, so it carries
+    // two sentences: what it is (the 标签 and the 描述, in the cell's `title`)
+    // and what clicking it does. Both reach the surface, so a cell is not an
+    // unlabelled square to a screen reader.
+    'sticker.cellCaption': '{name} — click to edit',
+    'sticker.cellCaptionUnlabeled': 'No label yet — click to edit',
+    'sticker.cellTitle': '{name}: {description}',
+    'sticker.cellTitleNoDescription': '{name}',
+    'sticker.cellTitleUnlabeled': 'No label yet: {description}',
+    // The editor is the one place a sticker's fields exist, so it needs a way out
+    // that is not Esc alone.
+    'sticker.closeEditor': 'Close',
 
     // ── 作用域 ─────────────────────────────────────────────────────────────
     'scope.global': 'Global',
@@ -466,6 +487,13 @@ const ZH_CN = {
     'pack.searchDeleteHint': '清空搜索后才能删除选中的表情。',
     'pack.renamed': '已改名为「{name}」。用旧名字写的标记不再匹配。',
     'pack.nameTaken': '已经有一个叫「{name}」的表情包了。',
+    // 包头兼作手风琴开关（票 12），所以这一行得说清点击会往哪边走。
+    'pack.expand': '展开这个表情包',
+    'pack.collapse': '收起这个表情包',
+    // 批量是一个模式，所以按钮分别说「进入」和「退出」。图标只有一个，
+    // 当前状态由 `aria-pressed` 与高亮样式说。
+    'pack.batchMode': '批量选择表情',
+    'pack.batchModeDone': '结束批量选择',
 
     // ── 一行表情 ───────────────────────────────────────────────────────────
     'sticker.selectForDelete': '勾选以便批量删除',
@@ -477,6 +505,14 @@ const ZH_CN = {
     'sticker.delete': '删除',
     'sticker.renamed': '标签已改为「{name}」。用旧标签写的标记不再匹配。',
     'sticker.labelTaken': '这个表情包里已经有一张标签为「{name}」的表情了。',
+    // 一个格子就是一张表情的默认全部内容，所以它带两句话：它是什么（标签与
+    // 描述，写在格子的 `title` 里）以及点它会做什么。
+    'sticker.cellCaption': '{name}——点一下编辑',
+    'sticker.cellCaptionUnlabeled': '待填标签——点一下编辑',
+    'sticker.cellTitle': '{name}：{description}',
+    'sticker.cellTitleNoDescription': '{name}',
+    'sticker.cellTitleUnlabeled': '待填标签：{description}',
+    'sticker.closeEditor': '关闭',
 
     // ── 作用域 ─────────────────────────────────────────────────────────────
     'scope.global': '全局',
