@@ -184,7 +184,10 @@ function buildFitField(context, stored, onChange) {
     caption.textContent = t(SIZE_FIELD_LABEL_KEYS.fit);
 
     const select = document.createElement('select');
-    select.className = 'text_pole';
+    // `st-emote-size` so the select shares one width rule with the hand-typed
+    // fields beside it — a fill mode that lines up with its own size fields reads
+    // as one row of settings rather than as a row with an exception in it.
+    select.className = 'text_pole st-emote-size';
     select.append(option('', t('size.fitDefault')));
     for (const mode of FIT_MODES) {
         select.append(option(mode, mode));
