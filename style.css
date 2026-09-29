@@ -37,10 +37,10 @@
  * narrow as ~300px wide or twice that. Two numbers carry the whole vertical
  * rhythm:
  *
- *   `gap`   — the space *inside* a group. Deliberately small: a group is a
+ *   `gap`   — the space *inside* a block. Deliberately small: a block is a
  *             column of related controls, and 8px between every pair of them
  *             makes the panel twice as tall for no gain in reading.
- *   `space` — the space *between* groups, split by the rules below around the
+ *   `space` — the space *between* blocks, split by the rules below around the
  *             hairline so the line sits in the middle of the gap rather than at
  *             the edge of it. About 16px in total, against 6px inside.
  *
@@ -51,6 +51,84 @@
 #st_emote_drawer {
     --st-emote-gap: 6px;
     --st-emote-space: 12px;
+}
+
+/*
+ * The intro: two lines, and the marker sample on its own so the thing a user
+ * has to type exactly is never broken across a line by the words before it.
+ */
+.st-emote-intro-token {
+    margin-top: 2px;
+}
+
+.st-emote-intro-token code {
+    white-space: nowrap;
+}
+
+/*
+ * The status line, and the warning that shares its shape.
+ *
+ * **The dot is filled while the 总开关 is on and hollow while it is off**, which
+ * is a distinction that survives a light theme, a dark theme and a user who has
+ * turned the accent colours into something else. A colour would have been the
+ * obvious way to say it and the wrong one: the same variables already carry
+ * "this is a problem" everywhere else in this stylesheet.
+ */
+.st-emote-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: var(--st-emote-space);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    font-size: 0.85em;
+}
+
+.st-emote-status-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.st-emote-status-off {
+    opacity: 0.75;
+}
+
+.st-emote-status-off .st-emote-status-dot {
+    background: transparent;
+}
+
+.st-emote-status-text {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.st-emote-status-counts {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: auto;
+    opacity: 0.7;
+    text-align: right;
+}
+
+/*
+ * 冲突, the other question the status line exists to answer: "I enabled it, I
+ * uploaded it, and nothing rendered". Shown only when there is one, because a
+ * line that is always there and usually empty is a line the eye learns to skip.
+ */
+.st-emote-status-warn {
+    border-color: var(--SmartThemeQuoteColor, #c0392b);
+    color: var(--SmartThemeQuoteColor, #c0392b);
+    margin-top: calc(-1 * var(--st-emote-gap));
+    margin-bottom: var(--st-emote-space);
+}
+
+.st-emote-status-warn[hidden] {
+    display: none;
 }
 
 /*
@@ -66,16 +144,14 @@
     margin-top: var(--st-emote-gap);
 }
 
+/*
+ * Two sections in a row read as one block of drawers rather than as two things,
+ * which is what the 接入与工具 and 外观 blocks want: a block title above them
+ * already says they are one kind of thing, and a gap between each pair would
+ * contradict it.
+ */
 .st-emote-section + .st-emote-section {
     margin-top: 0;
-}
-
-/*
- * A section that follows a group takes the group's own step instead, so a closed
- * section does not make the panel look as though it lost a block.
- */
-.st-emote-group + .st-emote-section {
-    margin-top: var(--st-emote-space);
 }
 
 /*
@@ -105,23 +181,119 @@
 }
 
 /*
- * The hairline between blocks: the space above and below it, and the line
- * itself. One rule for every separator in the panel — between the three settings
- * groups, and between the tools and the data below them — so a new block joins
- * an existing rhythm instead of inventing a fourth way to be separated. The
- * line sits in the middle of the gap rather than at either edge of it.
+ * The hairline between the panel's four blocks. One rule for every separator on
+ * the panel: the space above and below it, and the line itself, which sits in
+ * the middle of the gap rather than at either edge of it.
  *
- * **It comes after the section rules on purpose.** The debug area is both a
- * `.st-emote-section` and a `.st-emote-debug`, the two selectors have equal
- * specificity, and this one has to win: a closed tool section that took the
- * block step would read as if the panel had lost a block. A rule that depended
- * on that would be a trap for whoever edits this file next.
+ * The spacing and this line are the *baseline* separation — the two numbers
+ * above, unchanged. What changed in ticket 13 is that they are no longer the
+ * only separation: each block also has a title, because a 6px difference in
+ * spacing and a hairline drawn in the client's own border colour give the eye
+ * nowhere to land across forty controls of equal weight.
  */
-.st-emote-group + .st-emote-group,
-.st-emote-debug {
+.st-emote-block + .st-emote-block {
     margin-top: 4px;
     padding-top: var(--st-emote-space);
     border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+/*
+ * A block title.
+ *
+ * **Bold at the panel's own size — not small, not wide-tracked, not upper-case.**
+ * The first attempt at this was `0.78em / 600 / uppercase / opacity 0.6`, on the
+ * reasoning that a block heading should stay quieter than the client's own
+ * collapsible headers. Compared against other extensions' section headings it
+ * read as a caption on nothing: quieter than a field label and much quieter than
+ * the thing it was introducing. The size is the client's, the weight carries the
+ * hierarchy, and a heading is set at full strength or not at all.
+ */
+.st-emote-block-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.st-emote-block-title {
+    flex: 0 0 auto;
+    font-size: 1em;
+    font-weight: 700;
+    margin-bottom: 2px;
+}
+
+/* The library's own count, on the far side of its title row. */
+.st-emote-block-note {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.8em;
+    opacity: 0.6;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/*
+ * One of the panel's four blocks: 表情包, 渲染, 外观 and 接入与工具.
+ *
+ * A column of related controls with the block's own gap, and nothing else —
+ * the separation from the next block is the rule above.
+ */
+.st-emote-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--st-emote-gap);
+}
+
+/*
+ * A hint inside a block. The block's own `gap` already spaces these, and a flex
+ * container does not collapse margins, so the hint's own bottom margin would add
+ * a second step to every one of them.
+ */
+.st-emote-block .st-emote-hint {
+    margin-bottom: 0;
+}
+
+/*
+ * The 总开关's row.
+ *
+ * **It is the one control that decides whether the extension does anything,
+ * and it is the only setting drawn as a box rather than as a line.** Same
+ * border colour as everything else, so the difference is the box and the type
+ * size rather than a colour the client controls and a light theme would lose.
+ * Off, it drops back to an outline and a lighter weight: present, reachable,
+ * and clearly not what the rest of the panel is currently doing.
+ */
+.st-emote-master {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.st-emote-master-off {
+    font-weight: 400;
+    border-style: dashed;
+    opacity: 0.75;
+}
+
+/* A sub-heading inside a block: the 标记形态 group under 渲染. */
+.st-emote-subtitle {
+    opacity: 0.8;
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+/*
+ * A field that configures the switch above it. The indent is the whole point:
+ * without it the tag-name input is a fifth setting of equal weight, and with it
+ * it reads as part of the 标记形态 group.
+ */
+.st-emote-suboption {
+    padding-left: 1.6em;
 }
 
 .st-emote-hint {
@@ -130,11 +302,65 @@
     margin-bottom: var(--st-emote-gap);
 }
 
+/*
+ * The first-run card: the four steps, shown only while the library is empty.
+ *
+ * Dashed rather than solid, so it reads as "there is nothing here yet" and not
+ * as a box the user is supposed to fill in. It is the only thing on the panel
+ * that is a card, because it is the only thing that is *about* the panel rather
+ * than a control in it.
+ */
+.st-emote-start {
+    border: 1px dashed var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 8px 10px;
+}
+
+.st-emote-start[hidden] {
+    display: none;
+}
+
+.st-emote-start-title {
+    font-weight: 600;
+}
+
+.st-emote-start-steps {
+    margin: 6px 0 0;
+    padding-left: 1.5em;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+
+.st-emote-start .st-emote-hint {
+    margin: 8px 0 0;
+    opacity: 0.65;
+}
+
+/*
+ * The create row, which is the library's second toolbar row: the search filters
+ * the list below it and the create row puts something *into* that same list, so
+ * the two sit together above it rather than on opposite ends of the panel.
+ *
+ * The label is what makes this row legible at a glance. The field had only a
+ * placeholder, and a placeholder is gone the moment the field has content —
+ * which for the one control that creates everything else is the worst possible
+ * time to lose its name.
+ */
 .st-emote-create {
     display: flex;
     gap: 6px;
     align-items: center;
-    margin-top: var(--st-emote-space);
+}
+
+.st-emote-create-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: 0.9em;
+    opacity: 0.8;
+    cursor: text;
 }
 
 /*
@@ -188,27 +414,6 @@
     min-width: 0;
 }
 
-/*
- * One of the three groups the settings above the library are sorted into: 处理
- * (what gets rendered at all), 标记 (what the token is written with) and 外观
- * (where a rendered one lands and how big it is).
- *
- * The hairline between them is the only thing that separates them. A card inside
- * the client's card would make the panel a set of boxes, and a heading would need
- * a sentence in both catalogs to say what the spacing already says — so the
- * grouping is carried entirely by the rhythm above.
- */
-.st-emote-group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--st-emote-gap);
-}
-
-/* The group's own `gap` already spaces these; the margin would double it. */
-.st-emote-group .st-emote-hint {
-    margin-bottom: 0;
-}
-
 .st-emote-option {
     display: flex;
     align-items: center;
@@ -231,18 +436,6 @@
  */
 .st-emote-option .text_pole:disabled {
     opacity: 0.5;
-}
-
-/* The 标记 form group's own caption, between the switches that follow it. */
-.st-emote-form-label {
-    opacity: 0.8;
-    font-size: 0.9em;
-    margin-top: 4px;
-}
-
-.st-emote-placement,
-.st-emote-sizes {
-    margin-bottom: var(--st-emote-gap);
 }
 
 .st-emote-field {
@@ -351,14 +544,31 @@
  * pack list right below it, so it is the one control on the panel a user
  * reaches for without having decided to open something first.
  */
-.st-emote-search {
-    margin-top: var(--st-emote-space);
-    margin-bottom: var(--st-emote-gap);
-}
-
 .st-emote-search .text_pole {
     width: 100%;
     box-sizing: border-box;
+}
+
+/*
+ * The pack list's own scroll box.
+ *
+ * **The list is the panel's content, and content is what scrolls.** Left to run
+ * as one long column, a library of twenty packs pushes the three settings blocks
+ * and the tools off the bottom of the panel, and reaching a size setting then
+ * means scrolling past everything — which is how the panel ended up reading as
+ * "settings, and something at the far end". Bounded here, the settings stay
+ * where they are however big the library gets, and the search box and the create
+ * row stay outside the box so they are always the same two rows under the title.
+ *
+ * `overscroll-behavior` is what stops the list from handing the leftover scroll
+ * to the panel behind it: reaching the end of the library scrolls the panel,
+ * which is what a user reaching the end of a list expects to have to do twice
+ * for.
+ */
+.st-emote-packs {
+    max-height: 55vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .st-emote-import {
@@ -615,9 +825,13 @@
     font-size: 0.85em;
 }
 
+/*
+ * The packs a chat's characters reference but that are not installed here. It
+ * sits between the create row and the list because that is where the packs it
+ * offers to create will appear.
+ */
 .st-emote-missing {
-    margin-top: var(--st-emote-space);
-    margin-bottom: var(--st-emote-gap);
+    margin-top: var(--st-emote-gap);
 }
 
 .st-emote-missing-header {
@@ -633,8 +847,8 @@
 
 /*
  * The debug area's own inner block, inside the collapsed section that wraps it.
- * The section carries the panel's spacing and the hairline; this is the content
- * the client slides open, and it needs no rule of its own.
+ * The section is the first thing in the 接入与工具 block, so the block title
+ * above it is the separation and the section needs no rule of its own.
  */
 .st-emote-debug-body {
     margin-bottom: var(--st-emote-gap);
@@ -649,17 +863,39 @@
 }
 
 /*
- * The debug area's two buttons, sharing the panel's one action-button rule. Their
- * own class stays because it carries the margin the row needs; the no-wrap comes
- * from `.menu_button.st-emote-button` like everywhere else, which is what stops
- * "Re-render the current chat" from becoming a four-line block at the top of the
- * panel.
+ * The debug area's `Render` button, sharing the panel's one action-button rule.
+ * Its own class stays because it carries the margin the row needs; the no-wrap
+ * comes from `.menu_button.st-emote-button` like everywhere else, which is what
+ * stops the button from becoming a four-line block.
  */
 .st-emote-debug-actions {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
     margin: 6px 0 4px;
+}
+
+/*
+ * The `Re-render` row, below the preview and under a hairline.
+ *
+ * **The rule is the point.** The button and its caption sit below the result
+ * box, so the row reads as something that happens *after* looking at the
+ * preview rather than as a second button belonging to the same toolbar. The
+ * caption is a sentence rather than a glyph's tooltip because a lone icon in a
+ * lone row has nothing around it to be interpreted against.
+ */
+.st-emote-debug-repaint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: var(--st-emote-space);
+    padding-top: var(--st-emote-gap);
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.st-emote-debug-repaint-label {
+    font-size: 0.9em;
+    opacity: 0.8;
 }
 
 .st-emote-preview-note {
