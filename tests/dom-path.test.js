@@ -415,6 +415,70 @@ test('a re-render follows the chat the client is showing, not the one captured a
     );
 });
 
+test('the DOM element pass honours a 标记 form that is switched off', async () => {
+    // The element pass is the DOM path's own scanner, and it does not go through
+    // `findTokens`: a raw `<sticker>` in the client's markup is an *element*, so
+    // this is a second place the switch has to be read, and a missed one is a
+    // "disabled" form that keeps rendering.
+    const html = '<p><sticker>daily:happy</sticker></p>';
+    await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks({ tagForm: false }));
+        installDomRendering(context);
+        renderMessageElement(context, document.querySelector('.mes'));
+        // Untouched: not removed, not replaced. Turning the form off is not the
+        // same as the token missing, which *would* take the element out.
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+        assert.equal(document.querySelector('.mes_text').querySelector('sticker').textContent, 'daily:happy');
+    });
+});
+
+test('with both 标记 forms off the DOM pass walks nothing at all', async () => {
+    // Not a claim about speed. The pre-filter list is empty, and the guard that
+    // acts on it is what stops a pass with nothing to look for from walking every
+    // text node in the chat on every event.
+    const html = '<p>[[sticker:daily:happy]] <sticker>daily:sad</sticker></p>';
+    await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks({ bracketForm: false, tagForm: false }));
+        installDomRendering(context);
+        assert.equal(renderMessageElement(context, document.querySelector('.mes')), 0);
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+    });
+});
+
+test('the two diagnostic lines carry the exact wording a user greps for', async () => {
+    // These are the lines a user is told to look for when a sticker does not
+    // appear or a size field is not doing what it says, and `README.md` prints
+    // them. A prefix that drifts from the documentation is a support question
+    // nobody can answer, and the 冲突 line already has this assertion — these two
+    // were the remaining ones without it.
+    const html = '<p>[[sticker:daily:angry]] [[sticker:daily:happy]]</p>';
+    let lines = [];
+    const savedInfo = console.info;
+    console.info = (...parts) => lines.push(parts.join(' '));
+    try {
+        await withChat(message({ mesid: 0, html }), ({ document, ...rest }) => {
+            const context = withSettings(rest, defaultPacks({
+                sizes: { inline: { maxHeight: '3rem' } },
+            }));
+            installDomRendering(context);
+            renderMessageElement(context, document.querySelector('.mes'));
+        });
+    } finally {
+        console.info = savedInfo;
+    }
+
+    const miss = lines.find((line) => line.includes('sticker not rendered'));
+    assert.equal(
+        miss,
+        '[st-emote] sticker not rendered (label-not-found): daily:angry',
+    );
+    const size = lines.find((line) => line.includes('size value ignored'));
+    assert.equal(
+        size,
+        '[st-emote] size value ignored, treated as unset: maxHeight = "3rem"',
+    );
+});
+
 test('a sticker image that fails to load is taken out of the chat', async () => {
     // A dead 外链 and a file that never arrived both arrive as an image that
     // fired `error`. Removing it is what makes a 未命中 actually look like one

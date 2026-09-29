@@ -9,7 +9,7 @@
 - **名称**：st-emote
 - **形态**：SillyTavern 扩展
 - **一句话**：模型在回复里用标记指名表情，扩展把标记渲染成表情图片。
-- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）、票 04（投放方式与尺寸）、票 05（旧版本兼容路径与产出统一）、票 06（存储与生命周期）与票 07（调试工具、操作入口、本地化与文档）已实现。票 08（设置项：表情间隙、标记形态开关、总开关）与票 09（渲染产物变更：清单两档、未命中不再剔除标记）已拆出、待实现；后续票据见 `.scratch/st-emote/issues/`。
+- **当前阶段**：票 01（闭环：一张表情能在消息里出现）、票 02（语法、约束、处理范围）、票 03（生效集与宏）、票 04（投放方式与尺寸）、票 05（旧版本兼容路径与产出统一）、票 06（存储与生命周期）、票 07（调试工具、操作入口、本地化与文档）与票 08（设置项：表情间隙、标记形态开关、总开关）已实现。票 09（渲染产物变更：清单两档、未命中不再剔除标记）已拆出、待实现；后续票据见 `.scratch/st-emote/issues/`。
 
 相关文档：
 
@@ -54,7 +54,7 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 
 ### 代码布局
 
-- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）；票 07 起还有界面文案（`i18n-catalogs.js` 是纯数据、`i18n.js` 是查找与 BCP-47 解析）、冲突检测（`conflict.js`）与「试渲染」（`preview.js`）。
+- `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）；票 07 起还有界面文案（`i18n-catalogs.js` 是纯数据、`i18n.js` 是查找与 BCP-47 解析）、冲突检测（`conflict.js`）与「试渲染」（`preview.js`）；票 08 起 `size.js` 还多了一对**不是**一对一映射的间隙字段，`token.js` 多了两个**标记形态**开关。
 - `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层（含两条路径都有效的 `restitchChat`），`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。票 07 起：`locale.js` 是「客户端是哪种语言」这**一个**事实，并把它发布给 `core/i18n.js`（其余全交给核心）；`log.js` 是唯一的控制台出口（`logInfo` / `logError`）；`commands.js` 注册 `/st-emote`；`debug-panel.js` 是调试区（试渲染 + 重新渲染）。`ui.js` 只剩表情包的列表与行。
 - `tests/`：纯核心测试 + 共享契约 + 两条适配层的对照与生命周期测试 + 面板与压缩包的集成测试。
 
@@ -89,7 +89,10 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - 票 06 的适配层：`tests/panel.test.js`（真 jsdom 面板，驱动真实的 `adapter/ui.js`）与 `tests/archive.test.js`（真 zip 往返）。两者共用 `tests/contract/st-dom.js` 里的 `withJsZip`——它用 **devDependency `jszip`** 装出那个全局，**没有任何 skip 路径**：一套会静默跳过的导出/导入测试，等于一次什么都不证明的绿色 `npm test`。运行时仍然读客户自带的 `/lib/jszip.min.js`。
 - 票 07 的纯核心：`tests/i18n.test.js`（两份目录键集对齐、回退、无标记、没有谁读不到的键、单复数）、`tests/conflict.test.js`（冲突检测与清单）、`tests/preview.test.js`（粘一段 → 最终结构：图搬到了没有、未命中的理由）。
 - 票 07 的适配层：`tests/commands.test.js`（驱动真实的 `runCommand`；注册只查客户端有没有那几个类，并检查「登记两次」这件事真的会挂）、`tests/panel.test.js` 里新加的几条（整个面板是否双语、用户输入是否只当文本、试渲染不碰聊天、粘进去的文本是否走了客户端的 markdown 步骤、重渲染按钮）。
+- 票 08 的纯核心：`tests/size.test.js` 里的间隙各条（单轴、零、非法值当未设置、两个 placeholder 各是各的默认值、未命中留下的文本不吃尺寸集）、`tests/token.test.js` 里的形态开关（关掉的形态不是 token、预筛与扫描器答同一个问题、缺省即开）、`tests/preview.test.js` 无新增（形态经由 `renderOptions` 透传，两条真实路径的对照在 `render-paths.test.js`）。
+- 票 08 的适配层：`tests/render-paths.test.js` 加了「间隙到达的是图本身」与「关掉的形态在两条路径上都不生效」两组（都用共享契约断言，所以两边的差异会自己冒出来）；`tests/dom-path.test.js` 加了元素扫描读开关、两个都关时预筛短路、以及**承自票 07 遗留的那条日志字面断言**（未命中与非法尺寸两行前缀此前无人盯住，本票又走了一遍那条路径，是补上的时机）；`tests/panel.test.js` 加了形态开关、正则 JSON 随开关重生成、总开关实时退回标记、**总开关不压制试渲染**；`tests/commands.test.js` 加了 `on` / `off` 与宏空串；`tests/entry-disabled.test.js` 是**新文件**（`index.js` 每进程只跑一次，所以「启动即关」的客户端必须有自己的进程去观察）。
 - 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀、**ST 切换语言后面板是否跟着变**（ST 自己会刷新页面，扩展只读一次语言）、**`SillyTavern.libs.showdown` 在真机上是否可用以及我们的开关是否够用**。
+- 票 08 追加的（同一类，都得在真机上看一眼）：**形态关掉后那份 prompt-only 正则 JSON 导入正则扩展的实际行为**（我们只断言了生成的 `findRegex` 字符串，正则扩展本身只能在真机验）；**间隙的观感**（inline 之间、块级之间、混排、窄面板与小字号下 `em` 是否还合适）；**流式生成途中改设置**；**总开关关掉后含块后图的聊天立刻退回标记**（必须走 restitch，见 `restore.js` 的注释）与再打开后图立刻回来；**多出的几个控件在一行里挤不挤**。
 
 ### 界面文案与日志（票 07）
 
@@ -110,6 +113,19 @@ npm test         # node --test，发现并运行 tests/*.test.js
 曾经整个 `rerenderChat` 被 `shouldRunDomPass()` 挡住，于是**钩子路径上它什么也不做**，而面板的「重新渲染」按钮和 `/st-emote reload` 都在报告自己重渲染过了。`tests/hook-path.test.js` 现在用一个会真的跑钩子的 `updateMessageBlock` 盯着这件事。
 
 同理，`/st-emote reload` **不重读也不保存设置**：设置本来就是每次渲染现读的，而那次 `saveSettingsDebounced()` 会把用户手工改过的设置文件用内存里的版本盖掉——正好和它宣称的相反。
+
+### 设置项的三层开关（票 08）
+
+三件互不相干的事，只落在「设置 + 面板」上。它们各有**不止一个**读点，列在这里是因为漏掉一个读点的后果都是同一类：面板上看着关了，实际还在生效。
+
+- **间隙**（`marginX` / `marginY`，每套尺寸集各一对）。`core/size.js` 里它们是**第一处非一对一映射的字段**：`SIZE_PROPERTIES` 仍只放一对一的那五个，`SIZE_DEFAULTS` 改成**按存储字段名索引**（否则两个字段都映射到 `margin` 时，两个输入框的 placeholder 会显示同一个默认值），`SIZE_PANEL_FIELDS = [...SIZE_FIELDS, ...SIZE_MARGIN_FIELDS]` 才是面板与存储形状的字段来源。声明在 `evaluateSize` 里作为一个显式步骤发出，`margin: <y> <x>`。`style.css` 里 `.custom-st-emote-block` 的 `margin` **已删**——两条来源互相打补丁是后面极难查的一类 bug。
+- **标记形态开关**（`bracketForm` / `tagForm`）。核心只有 `core/token.js` 的 `findCandidates` 一处，但**五个调用方都得收口**，否则「关了」不等于「不生效」：`adapter/rendering.js` 的元素扫描（DOM 路径上 raw `<sticker>` 是元素，不走 `findTokens`）、同一文件的 `tokenPrefixes` 预筛、`adapter/regex.js` 的 prompt-only 正则 JSON、`render-path.js` 的 `allowStickerTag`（形态关掉就不开口子，**顺带让两条路径对「不处理」表现一致**）、面板上的标签名输入框置灰。关闭的形态**不是未命中**——它不再是语法，文本原样保留。
+- **总开关**（`settings.enabled`，默认 `true`）。**不新增第三层门**：`adapter/restore.js` 的 `renderingEnabled` + `stopRendering` / `resumeRendering` 已经是现成机制，ST 自己的扩展开关走的就是这一套。`setEnabled(context, enabled)` 放在 `adapter/render-path.js`（它要同时调 `installRendering`、`stopRendering`、`rerenderChat`，而 `restore.js` 不能反过来依赖 `render-path.js`），面板与 `/st-emote on|off` 共用它。`index.js` 在 jQuery 回调里按 `isEnabled(context)` 决定要不要装路径——**启动时就是关的**的客户端连订阅都不会有，比事后用标志拦更强。
+- 开关的默认值一律是**开**，`ensureSettings` 用 `!== false` 归一化：老版本写下的设置里根本没有这些键，把「键不存在」读成「用户关掉了」会在升级时静默关停一个能用的扩展。
+
+### 「试渲染」不受总开关约束（有意的不一致）
+
+`core/preview.js` 绕过了 `isRenderingEnabled`，理由写在它的模块注释里：预览粘的是文本不是聊天，而且「关掉了」正是你想调试的状态。**这一条要钉住**（`tests/panel.test.js` 有一条专门断言它），否则下一个读代码的人会去「修」它。形态开关相反，**是**被预览遵守的：形态是设置，不是全局状态。
 
 ### 「试渲染」走的是同一段渲染逻辑
 

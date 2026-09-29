@@ -21,6 +21,16 @@ import { SANITIZER_CLASS_PREFIX, STICKER_CLASS, TOKEN_ATTRIBUTE } from '../../co
 const STICKER_QUERY = `img.${STICKER_CLASS}`;
 
 /**
+ * The inline `style` an image carries with no configuration at all, per 尺寸集.
+ *
+ * Named constants rather than a literal repeated at every call site, so the
+ * expected default of each 尺寸集 is stated once — including the 间隙, which is
+ * part of it and used to live only in `style.css`.
+ */
+const INLINE_STYLE = 'max-height: 3em; object-fit: contain; margin: 0 0.15em';
+const BLOCK_STYLE = 'max-width: 100%; object-fit: contain; margin: 0.25em 0';
+
+/**
  * Parse an HTML string the way a browser would, so both paths are compared as
  * DOM rather than as strings. Attributes arrive decoded, which is what makes
  * this the right level to assert at: `<img class="…&lt;…">` and the tag it stands
@@ -199,7 +209,7 @@ export function sticker(spec) {
         classes: block ? [STICKER_CLASS, `${STICKER_CLASS}-block`] : [STICKER_CLASS],
         src: spec.src,
         alt: spec.alt ?? spec.label,
-        style: spec.style ?? (block ? 'max-width: 100%; object-fit: contain' : 'max-height: 3em; object-fit: contain'),
+        style: spec.style ?? (block ? BLOCK_STYLE : INLINE_STYLE),
         pack: spec.pack,
         label: spec.label,
         token: spec.token,
@@ -229,7 +239,7 @@ export function stickerMarkup(spec) {
     return `<img class="${block ? `${classes} ${classes}-block` : classes}"`
         + ` src="${spec.src}"`
         + ` alt="${spec.label}"`
-        + ` style="${spec.style ?? (block ? 'max-width: 100%; object-fit: contain' : 'max-height: 3em; object-fit: contain')}"`
+        + ` style="${spec.style ?? (block ? BLOCK_STYLE : INLINE_STYLE)}"`
         + ` data-st-emote-pack="${spec.pack}"`
         + ` data-st-emote-label="${spec.label}"`
         + ` ${TOKEN_ATTRIBUTE}="${spec.token ?? `[[sticker:${spec.pack}:${spec.label}]]`}"`

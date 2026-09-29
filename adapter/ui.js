@@ -55,6 +55,7 @@ import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
 import { useClientLocale } from './locale.js';
 import { logError } from './log.js';
+import { setEnabled } from './render-path.js';
 import { allowStickerTag, rerenderChat } from './rendering.js';
 import { clearContextRegexJson } from './regex.js';
 import { buildStickerPlacementSelect, mountSizingSection } from './sizing-panel.js';
@@ -188,9 +189,10 @@ function stickerImageMissing(sticker) {
 }
 
 /**
- * The panel's fixed skeleton: the intro, the two global switches, the 投放方式
- * and 尺寸 containers the sizing section fills, the pack creator, the macro and
- * regex hints, the import row, and the place the pack list goes.
+ * The panel's fixed skeleton: the intro, the 总开关 and the two 标记 form
+ * switches, the 投放方式 and 尺寸 containers the sizing section fills, the pack
+ * creator, the macro and regex hints, the import row, and the place the pack
+ * list goes.
  *
  * Only markup and ids here — every visible word is filled in afterwards through
  * `textContent`, because a sentence carrying a user's pack name must not be able
@@ -208,8 +210,20 @@ function panelSkeleton() {
         '<div class="st-emote-hint" id="st_emote_intro"></div>',
         '<div class="st-emote-options">',
         '<label class="st-emote-option">',
+        '<input type="checkbox" id="st_emote_enabled"> <span id="st_emote_enabled_label"></span>',
+        '</label>',
+        '<div class="st-emote-hint" id="st_emote_enabled_hint"></div>',
+        '<label class="st-emote-option">',
         '<input type="checkbox" id="st_emote_render_user"> <span id="st_emote_render_user_label"></span>',
         '</label>',
+        '<div class="st-emote-form-label" id="st_emote_form_label"></div>',
+        '<label class="st-emote-option">',
+        '<input type="checkbox" id="st_emote_bracket_form"> <span id="st_emote_bracket_form_label"></span>',
+        '</label>',
+        '<label class="st-emote-option">',
+        '<input type="checkbox" id="st_emote_tag_form"> <span id="st_emote_tag_form_label"></span>',
+        '</label>',
+        '<div class="st-emote-hint" id="st_emote_form_hint"></div>',
         '<label class="st-emote-option">',
         '<span id="st_emote_tag_name_label"></span>',
         '<input type="text" class="text_pole" id="st_emote_tag_name">',
@@ -289,6 +303,11 @@ export function mountSettingsPanel(context) {
     root.querySelector('#st_emote_size_hint').textContent = t('panel.sizeHint');
     root.querySelector('#st_emote_placement_label').textContent = t('placement.label');
     root.querySelector('#st_emote_render_user_label').textContent = t('panel.renderUser');
+    root.querySelector('#st_emote_enabled_label').textContent = t('panel.enabled');
+    root.querySelector('#st_emote_enabled_hint').textContent = t('panel.enabledHint');
+    root.querySelector('#st_emote_form_label').textContent = t('form.label');
+    root.querySelector('#st_emote_bracket_form_label').textContent = t('form.bracket');
+    root.querySelector('#st_emote_tag_form_label').textContent = t('form.tag');
     root.querySelector('#st_emote_tag_name_label').textContent = `${t('panel.tagName')}:`;
     root.querySelector('#st_emote_new_pack').placeholder = t('panel.newPackName');
     root.querySelector('#st_emote_create_pack').textContent = t('panel.createPack');
@@ -304,8 +323,31 @@ export function mountSettingsPanel(context) {
     root.querySelector('#st_emote_packs').before(mountDebugSection(context, root));
 
     const tagInput = root.querySelector('#st_emote_tag_name');
+    const bracketBox = root.querySelector('#st_emote_bracket_form');
+    const tagBox = root.querySelector('#st_emote_tag_form');
+    const formHint = root.querySelector('#st_emote_form_hint');
     tagInput.value = settings.stickerTag;
-    regexBlock.textContent = clearContextRegexJson(settings.stickerTag);
+
+    /**
+     * Repaint everything the two 标记 form switches decide: the tag-name input
+     * (useless while the form is off), the "both off" warning, and the
+     * prompt-only regex JSON.
+     *
+     * @param {any} current
+     */
+    const refreshTokenForms = (current) => {
+        tagInput.disabled = !current.tagForm;
+        formHint.textContent = current.bracketForm || current.tagForm ? '' : t('form.bothOff');
+        regexBlock.textContent = clearContextRegexJson(current.stickerTag, {
+            bracketForm: current.bracketForm,
+            tagForm: current.tagForm,
+        });
+    };
+    refreshTokenForms(settings);
+    // The sanitizer permission follows the form switch, and the chat is
+    // repainted so a token already on screen becomes plain text again.
+    allowStickerTag(settings.tagForm ? settings.stickerTag : null);
+
     tagInput.addEventListener('change', () => {
         const result = validateStickerTag(tagInput.value);
         if (!result.ok) {
@@ -315,10 +357,21 @@ export function mountSettingsPanel(context) {
         }
         const current = ensureSettings(context);
         current.stickerTag = result.value;
-        allowStickerTag(result.value);
-        regexBlock.textContent = clearContextRegexJson(result.value);
+        allowStickerTag(current.tagForm ? result.value : null);
+        refreshTokenForms(current);
         saveAndRefresh(context);
     });
+
+    for (const [box, field] of [[bracketBox, 'bracketForm'], [tagBox, 'tagForm']]) {
+        box.checked = settings[field];
+        box.addEventListener('change', () => {
+            const current = ensureSettings(context);
+            current[field] = box.checked;
+            allowStickerTag(current.tagForm ? current.stickerTag : null);
+            refreshTokenForms(current);
+            saveAndRefresh(context);
+        });
+    }
 
     const copyButton = root.querySelector('#st_emote_copy_regex');
     copyButton.addEventListener('click', async () => {
@@ -335,6 +388,13 @@ export function mountSettingsPanel(context) {
     renderUserCheckbox.checked = settings.renderUserMessages;
     renderUserCheckbox.addEventListener('change', () => {
         ensureSettings(context).renderUserMessages = renderUserCheckbox.checked;
+        saveAndRefresh(context);
+    });
+
+    const enabledCheckbox = root.querySelector('#st_emote_enabled');
+    enabledCheckbox.checked = settings.enabled;
+    enabledCheckbox.addEventListener('change', () => {
+        setEnabled(context, enabledCheckbox.checked);
         saveAndRefresh(context);
     });
 

@@ -93,8 +93,40 @@ test('findTokens orders both forms by position', () => {
 });
 
 test('tokenPrefixes reports the opening markers for the configured tag', () => {
-    assert.deepEqual(tokenPrefixes('my-sticker'), ['[[sticker:', '<my-sticker>', '&lt;my-sticker&gt;']);
-    assert.deepEqual(tokenPrefixes('div'), ['[[sticker:', '<sticker>', '&lt;sticker&gt;']);
+    assert.deepEqual(tokenPrefixes({ tagName: 'my-sticker' }),
+        ['[[sticker:', '<my-sticker>', '&lt;my-sticker&gt;']);
+    assert.deepEqual(tokenPrefixes({ tagName: 'div' }),
+        ['[[sticker:', '<sticker>', '&lt;sticker&gt;']);
+});
+
+test('tokenPrefixes drops the markers of a 标记 form that is switched off', () => {
+    // The pre-filter and the scanner have to answer the same question, or the
+    // DOM path walks text nodes the scanner would find nothing in.
+    assert.deepEqual(tokenPrefixes({ bracketForm: false }),
+        ['<sticker>', '&lt;sticker&gt;']);
+    assert.deepEqual(tokenPrefixes({ tagForm: false }),
+        ['[[sticker:']);
+    assert.deepEqual(tokenPrefixes({ tagName: 'emo', bracketForm: false, tagForm: false }), []);
+});
+
+test('a 标记 form that is switched off is not a token at all', () => {
+    // Not a miss: a miss is a marker that *did* match and resolved to nothing.
+    // A disabled form is not grammar, so the text is left exactly as written and
+    // nothing is reported — the same thing a sentence containing brackets does.
+    const text = 'a [[sticker:daily:happy]] b <sticker>daily:sad</sticker>';
+    assert.deepEqual(findTokens(text, { bracketForm: false }).map((token) => token.raw),
+        ['<sticker>daily:sad</sticker>']);
+    assert.deepEqual(findTokens(text, { tagForm: false }).map((token) => token.raw),
+        ['[[sticker:daily:happy]]']);
+    assert.deepEqual(findTokens(text, { bracketForm: false, tagForm: false }), []);
+});
+
+test('both 标记 forms on by default, so a caller with no settings gets both', () => {
+    // The same "unset means the default" rule the hand-typed size fields follow:
+    // an absent switch is not a switch someone turned off.
+    assert.deepEqual(findTokens('[[sticker:a:b]] <sticker>a:b</sticker>').length, 2);
+    assert.deepEqual(findTokens('[[sticker:a:b]] <sticker>a:b</sticker>',
+        { bracketForm: true, tagForm: true }).length, 2);
 });
 
 test('normalizeLabel trims, collapses whitespace and lowercases', () => {

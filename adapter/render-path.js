@@ -19,7 +19,9 @@ import {
     installDomRendering,
     installStickerImageGuard,
     processAllMessages,
+    rerenderChat,
 } from './rendering.js';
+import { resumeRendering, stopRendering } from './restore.js';
 import { ensureSettings } from './settings.js';
 import { liveContext } from './scope.js';
 
@@ -67,7 +69,14 @@ export function installRendering(context) {
     // or one inside a code block — would otherwise be stripped by DOMPurify,
     // while the DOM path would have shown it. Installing it on both is what
     // keeps "out of scope" looking the same on either client.
-    allowStickerTag(ensureSettings(context).stickerTag);
+    //
+    // And it is conditional on the form being on, which is the same property
+    // arriving from the other side: with the form off nothing renders it on
+    // either path, so leaving the hole open would preserve a `<sticker>` element
+    // that no pass would ever touch. The two paths then agree on "not handled"
+    // for the wrong reason *and* the right one (ADR-0002).
+    const settings = ensureSettings(context);
+    allowStickerTag(settings.tagForm ? settings.stickerTag : null);
     // Shared by both paths, so a sticker image that cannot be drawn — a file
     // that never arrived, a 外链 that has gone dead — is taken out of the chat
     // and logged on either client.
@@ -80,4 +89,51 @@ export function installRendering(context) {
     installDomRendering(context);
     processAllMessages(context);
     return activePath;
+}
+
+/**
+ * The 总开关: this extension's own on/off, as the single entry point the panel's
+ * checkbox and `/st-emote on|off` both go through.
+ *
+ * **It is not a third gate.** `stopRendering` / `resumeRendering` are already
+ * the mechanism SillyTavern's own enable and disable hooks use, and the way out
+ * they perform is the one this needs too: the page is not reloading, so turning
+ * the switch off has to put the markers back itself rather than wait for a
+ * refresh. That is also what makes the two switches independent — ST's switch
+ * and this one both move the same flag, so whichever was used last decides the
+ * state and the other one finds it already right.
+ *
+ * Turning it *on* installs the path as well as flipping the flag, because the
+ * extension may have loaded with the switch off and therefore never installed
+ * anything; `installRendering` is idempotent, so doing it again on the way out
+ * of a normal disable is a no-op.
+ *
+ * @param {any} context
+ * @param {boolean} enabled
+ * @returns {boolean} The state now in force.
+ */
+export function setEnabled(context, enabled) {
+    ensureSettings(context).enabled = enabled;
+    if (enabled) {
+        resumeRendering();
+        installRendering(context);
+        rerenderChat(context);
+    } else {
+        stopRendering(context);
+    }
+    return enabled;
+}
+
+/**
+ * Read the 总开关 without changing anything. The entry point asks this before
+ * installing, so a client that loads with the switch off never subscribes to
+ * anything — the subscription outliving a disable is the very thing
+ * `adapter/restore.js` exists to guard against, and not subscribing at all is
+ * stronger than guarding.
+ *
+ * @param {any} context
+ * @returns {boolean}
+ */
+export function isEnabled(context) {
+    return ensureSettings(context).enabled;
 }

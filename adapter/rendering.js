@@ -42,17 +42,21 @@ let activeStickerTag = '';
 let purifierHookInstalled = false;
 
 /**
- * Let the configured HTML-tag form survive message sanitization. Safe to call
- * repeatedly; the hook itself is registered once.
+ * Let the configured HTML-tag form survive message sanitization, or withdraw
+ * that permission when the form is switched off.
  *
- * @param {unknown} tagName
+ * Safe to call repeatedly; the hook itself is registered once. Withdrawing
+ * matters as much as granting: leaving the hole open while the DOM path no
+ * longer renders the form would mean the sanitizer keeps a `<sticker>` element
+ * that nothing ever replaces, which is the one thing the grant exists to
+ * prevent.
+ *
+ * @param {unknown} tagName - The configured name, or a nullish value to
+ *   withdraw the permission.
  */
 export function allowStickerTag(tagName) {
     const result = validateStickerTag(tagName);
-    if (!result.ok) {
-        return;
-    }
-    activeStickerTag = result.value.toLowerCase();
+    activeStickerTag = result.ok ? result.value.toLowerCase() : '';
     if (purifierHookInstalled) {
         return;
     }
@@ -89,6 +93,13 @@ function replaceWithHtml(node, html) {
  * @returns {number}
  */
 function renderStickerElements(textElement, effectiveSet, options) {
+    if (options.tagForm === false) {
+        // The form is off, so a `<sticker>` in the DOM is not a token — it is a
+        // configured name sitting in the message as text, and the only honest
+        // thing to do with it is nothing. `allowStickerTag` has also stopped
+        // asking the sanitizer to keep it, so it is not even here to be read.
+        return 0;
+    }
     const elements = textElement.querySelectorAll(options.tagName ?? DEFAULT_STICKER_TAG);
     const misses = [];
     const invalidSizes = [];
@@ -130,7 +141,13 @@ function renderStickerElements(textElement, effectiveSet, options) {
  * @returns {number}
  */
 function renderTextNodes(textElement, effectiveSet, options) {
-    const hints = tokenPrefixes(options.tagName ?? DEFAULT_STICKER_TAG).map((prefix) => prefix.toLowerCase());
+    const hints = tokenPrefixes(options).map((prefix) => prefix.toLowerCase());
+    if (hints.length === 0) {
+        // Both forms off: there is nothing this pass could find, and walking the
+        // whole message body to learn that for every text node is the kind of
+        // "only wasted work" that is really "a form that is still on somewhere".
+        return 0;
+    }
     const walker = document.createTreeWalker(textElement, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
             const lower = (node.data ?? '').toLowerCase();

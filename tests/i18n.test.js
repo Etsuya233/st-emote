@@ -171,7 +171,9 @@ test('the catalog carries no value nobody can reach', () => {
     // a key added to a catalog has to be added here too, or this fails.
     const used = new Set([
         'panel.intro', 'panel.introTokenCaption', 'panel.tokenExample',
-        'panel.renderUser', 'panel.tagName', 'panel.sizeHint', 'panel.newPackName',
+        'panel.renderUser', 'panel.enabled', 'panel.enabledHint', 'form.label',
+        'form.bracket', 'form.tag', 'form.bothOff',
+        'panel.tagName', 'panel.sizeHint', 'panel.newPackName',
         'panel.createPack', 'panel.missingPackHeader', 'panel.createMissingPacks',
         'panel.missingPacksCreated', 'panel.noPacks', 'panel.noStickerMatches',
         'panel.searchPlaceholder', 'panel.importPack', 'panel.transferHint',
@@ -192,7 +194,8 @@ test('the catalog carries no value nobody can reach', () => {
         'placement.in-place', 'placement.after-block', 'placement.message-end',
         'placement.follow', 'placement.override', 'placement.label',
         'size.inline', 'size.block', 'size.minWidth', 'size.minHeight', 'size.maxWidth',
-        'size.maxHeight', 'size.fit', 'size.fitDefault', 'size.invalidHint',
+        'size.maxHeight', 'size.fit', 'size.fitDefault', 'size.marginX', 'size.marginY',
+        'size.invalidHint',
         'constraint.packName', 'constraint.label', 'constraint.description',
         'constraint.htmlTag', 'constraint.reason.empty', 'constraint.reason.too-long',
         'constraint.reason.forbidden-character', 'constraint.reason.newline',
@@ -208,7 +211,8 @@ test('the catalog carries no value nobody can reach', () => {
         'conflict.logLine', 'command.repainted', 'command.enabled', 'command.disabled',
         'command.unknownScope', 'command.unknownPack', 'command.noCharacter',
         'command.packArgument', 'command.scopeArgument', 'command.needPack',
-        'command.needAction', 'command.conflictsShown', 'command.returns', 'command.help',
+        'command.needAction', 'command.turnedOn', 'command.turnedOff',
+        'command.conflictsShown', 'command.returns', 'command.help',
         'macro.missing', 'macro.description', 'macro.returns', 'macro.modeDescription',
     ]);
     // Keys assembled from another value's name, so they cannot be listed here.

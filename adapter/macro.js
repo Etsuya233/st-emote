@@ -20,6 +20,14 @@ export const MACRO_NAME = 'st-emote';
 export function expandListing(context, mode) {
     useClientLocale(context);
     const settings = ensureSettings(context);
+    if (!settings.enabled) {
+        // **An empty string, not `listing.empty`.** The 生效集 is not empty — the
+        // packs are still enabled, only nothing will render them — so answering
+        // "none" would be a lie about the user's own configuration, and a
+        // plausible-looking one. Blank is the honest "there is nothing here", and
+        // the panel says the macro stops expanding when the 总开关 is off.
+        return '';
+    }
     const effectiveSet = buildScopedEffectiveSet(settings.packs, {
         global: settings.enabledPackNames,
         character: getCurrentCharacterScope(context),

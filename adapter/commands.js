@@ -33,6 +33,7 @@ import { t } from '../core/i18n.js';
 import { logError, logInfo } from './log.js';
 import { useClientLocale } from './locale.js';
 import { effectiveSetForMessage } from './render-common.js';
+import { setEnabled } from './render-path.js';
 import { rerenderChat } from './rendering.js';
 import { ensureSettings, setPackEnabled } from './settings.js';
 import {
@@ -54,15 +55,20 @@ export const COMMAND_NAME = 'st-emote';
 export const SCOPES = ['global', 'character', 'chat'];
 
 /**
- * The four things the command can do.
+ * The things the command can do.
  *
  * Exported because the sentence that lists them is a catalog entry in its own
  * right — the two spellings that language wants — and `tests/commands.test.js`
- * checks that the sentence names every action in here. A fifth action added here
+ * checks that the sentence names every action in here. An action added here
  * without being added to the catalog would otherwise reach a user who mistyped
  * one, and never be mentioned.
+ *
+ * `on` and `off` are the 总开关, and they are named as they are rather than as
+ * `enable` / `disable`: those two already mean a 表情包 in a 作用域, and one
+ * command where the same word means two different things is a sentence nobody
+ * can act on. `CONTEXT.md` carries the same distinction.
  */
-export const ACTIONS = ['enable', 'disable', 'reload', 'conflicts'];
+export const ACTIONS = ['enable', 'disable', 'on', 'off', 'reload', 'conflicts'];
 
 /**
  * `SCOPES` as the user sees them, for the two places that have to say them out.
@@ -166,6 +172,8 @@ function helpHtml(context) {
     const examples = [
         'enable pack=daily scope=chat',
         'disable pack=daily scope=global',
+        'off',
+        'on',
         'reload',
         'conflicts',
     ];
@@ -198,7 +206,28 @@ export async function runCommand(context, namedArgs = {}, unnamedArgs = []) {
     if (action === 'conflicts') {
         return reportConflicts(context);
     }
+    if (action === 'on' || action === 'off') {
+        return setExtensionEnabled(context, action === 'on');
+    }
     return setPackEnabledInScope(context, action === 'enable', namedArgs);
+}
+
+/**
+ * The 总开关, through the same `setEnabled` the panel's checkbox calls, so the
+ * two entry points cannot disagree about what "off" does — which is a claim
+ * about the chat and the macro, not about a boolean.
+ *
+ * Neither direction takes a `pack` or a `scope`: this switch is the extension
+ * itself, and a refusal that named them would suggest they applied.
+ *
+ * @param {any} context
+ * @param {boolean} enabled
+ * @returns {Promise<string>}
+ */
+async function setExtensionEnabled(context, enabled) {
+    setEnabled(context, enabled);
+    context.saveSettingsDebounced();
+    return t(enabled ? 'command.turnedOn' : 'command.turnedOff');
 }
 
 /**

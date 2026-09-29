@@ -19,10 +19,15 @@
  * Added alongside the base class for a sticker that owns its own block. One
  * image per block, so several in the same message stack vertically instead of
  * sitting side by side.
+ *
+ * The 间隙 between blocks is **not** here: it arrives as an inline `margin` on
+ * every image, evaluated from the 尺寸集 with the other size values. One source
+ * for it is the point — a rule here would sit underneath the inline declaration
+ * for every image and take over only for the images that have no field set,
+ * which is the hardest kind of bug to see.
  */
 .custom-st-emote-block {
     display: block;
-    margin: 4px 0;
 }
 
 .st-emote-hint {
@@ -57,6 +62,21 @@
 
 .st-emote-option .text_pole {
     width: 10em;
+}
+
+/*
+ * A disabled tag-name input: greyed rather than hidden, because the setting is
+ * still there and still stored — only the form it names is off.
+ */
+.st-emote-option .text_pole:disabled {
+    opacity: 0.5;
+}
+
+/* The 标记 form group's own caption, between the switches that follow it. */
+.st-emote-form-label {
+    opacity: 0.8;
+    font-size: 0.9em;
+    margin-top: 4px;
 }
 
 .st-emote-placement,

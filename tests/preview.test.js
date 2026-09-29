@@ -69,7 +69,7 @@ test('a pasted message comes back as the same HTML the chat would show', () => {
     assert.equal(preview.invalidSizes.length, 0);
     assert.equal(preview.html, 'She smiles. '
         + '<img class="' + STICKER_CLASS + '" src="user/images/st-emote/happy.png" alt="happy"'
-        + ' style="max-height: 3em; object-fit: contain" data-st-emote-pack="daily"'
+        + ' style="max-height: 3em; object-fit: contain; margin: 0 0.15em" data-st-emote-pack="daily"'
         + ' data-st-emote-label="happy" data-st-emote-token="[[sticker:daily:happy]]"'
         + ' data-st-emote-placement="in-place">');
 });

@@ -244,13 +244,45 @@ test('several block images after one block stack the same on both adapters', asy
     });
 });
 
+test('the 间隙 reaches the image on both adapters, and only the image', async () => {
+    // The 间隙 is the newest 尺寸集 field and the only one that is not a
+    // one-to-one map onto a CSS property, so it is the one where the two paths
+    // could most plausibly disagree. Neither does: the same declaration, in the
+    // same place, on the same element.
+    const withGap = { sizes: { inline: { marginX: '0.4em', marginY: '2px' } } };
+    await assertBothPaths({
+        name: 'inline gap',
+        source: '<p>a [[sticker:daily:happy]] b</p>',
+        settings: withGap,
+        expected: {
+            stickers: [view(HAPPY, {
+                style: 'max-height: 3em; object-fit: contain; margin: 2px 0.4em',
+            })],
+        },
+    });
+    await assertBothPaths({
+        name: 'block gap',
+        source: '<p>[[sticker:daily:happy]]</p>',
+        settings: { placement: 'after-block', sizes: { block: { marginY: '0.5em' } } },
+        expected: {
+            stickers: [view(HAPPY, {
+                placement: 'after-block',
+                style: 'max-width: 100%; object-fit: contain; margin: 0.5em 0',
+            })],
+        },
+    });
+});
+
 test('both 尺寸集 produce the same size style on both adapters', async () => {
     await assertBothPaths({
         name: 'block size set',
         source: '<p>[[sticker:daily:happy]]</p>',
         settings: { placement: 'after-block', sizes: { block: { maxWidth: '60%', fit: 'cover' } } },
         expected: {
-            stickers: [view(HAPPY, { placement: 'after-block', style: 'max-width: 60%; object-fit: cover' })],
+            stickers: [view(HAPPY, {
+                placement: 'after-block',
+                style: 'max-width: 60%; object-fit: cover; margin: 0.25em 0',
+            })],
         },
     });
     await assertBothPaths({
@@ -258,7 +290,9 @@ test('both 尺寸集 produce the same size style on both adapters', async () => 
         source: '<p>[[sticker:daily:happy]]</p>',
         settings: { sizes: { inline: { minWidth: '2em', maxHeight: '5em' } } },
         expected: {
-            stickers: [view(HAPPY, { style: 'min-width: 2em; max-height: 5em; object-fit: contain' })],
+            stickers: [view(HAPPY, {
+                style: 'min-width: 2em; max-height: 5em; object-fit: contain; margin: 0 0.15em',
+            })],
         },
     });
 });
@@ -273,6 +307,47 @@ test('both token forms render the same on both adapters', async () => {
         name: 'escaped tag form',
         source: '<p>&lt;sticker&gt;daily:happy&lt;/sticker&gt;</p>',
         expected: { stickers: [view({ ...HAPPY, token: '<sticker>daily:happy</sticker>' })] },
+    });
+});
+
+test('a 标记 form that is switched off does nothing on either adapter', async () => {
+    // Both spellings of the form, and both directions, because "disabled" has to
+    // mean the same thing whichever form survives. Nothing rendered and the text
+    // untouched: a disabled form is not grammar, so the message comes out as it
+    // went in rather than as a 未命中.
+    const source = '<p>[[sticker:daily:happy]] and <sticker>daily:happy</sticker></p>';
+    // `readText` reports *text content*, so what a disabled form leaves depends on
+    // whether something replaced it. Where the form is off, the raw
+    // `<sticker>…</sticker>` in the source is just an element holding its body —
+    // the client's own markup, which in a real client the sanitizer removes
+    // outright because `allowStickerTag` no longer asks it to keep the form.
+    // What matters here is that both paths agree on all of it.
+    await assertBothPaths({
+        name: 'bracket form off',
+        source,
+        settings: { bracketForm: false },
+        // The tag form rendered, and its image records the marker it replaced —
+        // which is what makes the switch reversible.
+        expected: {
+            stickers: [view({ ...HAPPY, token: '<sticker>daily:happy</sticker>' })],
+            text: '[[sticker:daily:happy]] and <sticker>daily:happy</sticker>',
+        },
+    });
+    await assertBothPaths({
+        name: 'tag form off',
+        source,
+        settings: { tagForm: false },
+        expected: {
+            stickers: [view(HAPPY)],
+            text: '[[sticker:daily:happy]] and daily:happy',
+        },
+    });
+    await assertBothPaths({
+        name: 'both forms off',
+        source,
+        settings: { bracketForm: false, tagForm: false },
+        // Nothing rendered, and nothing this extension removed.
+        expected: { stickers: [], text: '[[sticker:daily:happy]] and daily:happy' },
     });
 });
 

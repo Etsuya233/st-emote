@@ -340,6 +340,54 @@ test('reload repaints the chat, and claims nothing else', async () => {
     assert.equal(saves, 0);
 });
 
+test('on and off go through the same entry point as the panel, in both directions', async () => {
+    // The 总开关 has to reach three things — the render flag, the chat on screen
+    // and the macro — and the panel checkbox and this action share one
+    // `setEnabled` precisely so they cannot disagree about any of them. The
+    // observable claims are the chat and the macro, not the boolean.
+    const source = '<p>a [[sticker:daily:happy]] b</p>';
+    const off = await run({ action: 'off', chatHtml: source });
+    assert.equal(off.context.extensionSettings[STORAGE_KEY].enabled, false);
+    assert.equal(off.saves, 1, 'the switch was not saved');
+    assert.match(off.result, /st-emote is off/);
+    // The consequence that is easiest to be surprised by is in the sentence.
+    assert.match(off.result, /expands to nothing/);
+
+    const on = await run({ action: 'on', chatHtml: source });
+    assert.equal(on.context.extensionSettings[STORAGE_KEY].enabled, true);
+    assert.match(on.result, /st-emote is on again/);
+});
+
+test('the macro expands to nothing while the 总开关 is off, and says nothing about it', async () => {
+    const { expandListing } = await import('../adapter/macro.js');
+    await withChat('', async (harness) => {
+        const context = { ...harness, getCurrentLocale: () => 'en' };
+        context.extensionSettings[STORAGE_KEY] = structuredClone(CATALOGUE);
+
+        // On: the 清单 is there, so there is something for "off" to suppress.
+        assert.match(expandListing(context, 'full'), /daily:happy/);
+
+        context.extensionSettings[STORAGE_KEY].enabled = false;
+        // **Empty, not "none".** The 生效集 is not empty — the pack is still
+        // enabled, only nothing will render it — so `listing.empty` would be a
+        // lie about the user's own configuration, and a plausible-looking one.
+        assert.equal(expandListing(context, 'full'), '');
+        assert.equal(expandListing(context, 'simple'), '');
+    });
+});
+
+test('on and off take no pack or scope, and say so by working without them', async () => {
+    // A refusal naming a pack would suggest one applied. Passing a pack anyway
+    // has to be ignored rather than turned into an error, because the argument is
+    // shared with `enable` / `disable` in the same command.
+    const ignored = await run({
+        action: 'off',
+        namedArgs: { pack: 'daily', scope: 'nowhere' },
+    });
+    assert.equal(ignored.context.extensionSettings[STORAGE_KEY].enabled, false);
+    assert.match(ignored.result, /st-emote is off/);
+});
+
 test('every refusal names what to type instead of throwing', async () => {
     // A slash command that throws shows a stack trace; these four are the cases
     // a user will actually hit, and each has to come back as a sentence.
