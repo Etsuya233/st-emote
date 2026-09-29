@@ -300,26 +300,42 @@ test('a token in a code block stays text on both adapters', async () => {
     });
 });
 
-test('every kind of 未命中 disappears the same way on both adapters', async () => {
+test('every kind of 未命中 leaves the marker in the message on both adapters', async () => {
+    // One rule, six sources: the token is not removed, and what is left behind is
+    // the text the user wrote. The two paths differ in where the string comes
+    // from, so "same DOM" has to be asserted on what survives both.
     const cases = [
-        { name: 'label not found', source: '<p>a [[sticker:daily:angry]] b</p>' },
-        { name: 'pack not enabled', source: '<p>a [[sticker:roleplay:happy]] b</p>' },
-        { name: 'image missing', source: '<p>a [[sticker:daily:gone]] b</p>' },
-        { name: 'pack not found', source: '<p>a [[sticker:ghost:happy]] b</p>' },
-        {
-            name: 'ambiguous bare label',
-            source: '<p>a [[sticker:happy]] b</p>',
-            settings: { enabledPackNames: ['daily', 'roleplay'] },
-        },
-        {
-            name: 'empty effective set',
-            source: '<p>a [[sticker:daily:happy]] b</p>',
-            settings: { enabledPackNames: [] },
-        },
+        { name: 'label not found', marker: '[[sticker:daily:angry]]' },
+        { name: 'pack not enabled', marker: '[[sticker:roleplay:happy]]' },
+        { name: 'image missing', marker: '[[sticker:daily:gone]]' },
+        { name: 'pack not found', marker: '[[sticker:ghost:happy]]' },
+        { name: 'ambiguous bare label', marker: '[[sticker:happy]]', settings: { enabledPackNames: ['daily', 'roleplay'] } },
+        { name: 'empty effective set', marker: '[[sticker:daily:happy]]', settings: { enabledPackNames: [] } },
     ];
-    for (const entry of cases) {
-        await assertBothPaths({ ...entry, expected: { stickers: [], text: 'a  b' } });
+    for (const { marker, ...entry } of cases) {
+        await assertBothPaths({
+            ...entry,
+            source: `<p>a ${marker} b</p>`,
+            expected: { stickers: [], text: `a ${marker} b` },
+        });
     }
+});
+
+test('both token forms look the same when they miss, on both adapters', async () => {
+    // The bracket form needs no escaping, the tag form is escaped unconditionally
+    // so it cannot survive as an element the client has allowed through. Both
+    // land on one text node holding the marker the user wrote.
+    const missed = { stickers: [], text: 'a <sticker>daily:angry</sticker> b' };
+    await assertBothPaths({
+        name: 'raw tag form',
+        source: '<p>a <sticker>daily:angry</sticker> b</p>',
+        expected: missed,
+    });
+    await assertBothPaths({
+        name: 'escaped tag form',
+        source: '<p>a &lt;sticker&gt;daily:angry&lt;/sticker&gt; b</p>',
+        expected: missed,
+    });
 });
 
 test('messages outside 处理范围 are skipped identically on both adapters', async () => {
@@ -390,9 +406,6 @@ test('a message with no token is left alone by both adapters', async () => {
 });
 
 test('a pack that stops being enabled loses its images on both adapters', async () => {
-    // The DOM path needs the client's own re-render to get here, because a miss
-    // removed the token from the DOM and nothing left to re-render; the hook path
-    // gets it for free, since the client re-runs the hook whenever it formats.
     await assertBothPaths({
         name: 'pack enabled',
         source: '<p>[[sticker:daily:happy]]</p>',
@@ -402,9 +415,11 @@ test('a pack that stops being enabled loses its images on both adapters', async 
         name: 'pack disabled',
         source: '<p>[[sticker:daily:happy]]</p>',
         settings: { enabledPackNames: [] },
-        // A 未命中 is removed, not left as text — which is the whole reason a
-        // settings change has to re-render from source rather than reuse the DOM.
-        expected: { stickers: [], text: '' },
+        // The image goes and the marker comes back as text, which is the same
+        // text a re-render from source starts from. A settings change therefore
+        // has to re-render rather than reuse the DOM either way: an image that
+        // is still standing there is not something the new settings can un-place.
+        expected: { stickers: [], text: '[[sticker:daily:happy]]' },
     });
 });
 

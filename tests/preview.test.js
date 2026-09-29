@@ -173,12 +173,15 @@ test('with no converter the paste is plain text, and says so only in the doc', (
     assert.equal(preview.html.startsWith(escapeText('**bold** ')), true);
 });
 
-test('a miss is reported and the marker disappears from the rendered HTML', () => {
+test('a miss is reported and the marker stays in the rendered HTML', () => {
     const set = buildEffectiveSet(packs, ['daily']);
     const preview = buildPreview('[[sticker:daily:nope]]', set);
 
     assert.deepEqual(preview.misses.map((miss) => miss.reason), ['label-not-found']);
-    assert.equal(preview.html, '');
+    // The preview is a preview of the chat, so a miss looks here the way it
+    // looks there: the marker is still on screen, because the point of seeing
+    // it is to see what the model got wrong.
+    assert.equal(preview.html, '[[sticker:daily:nope]]');
 });
 
 test('a sticker with no image is a miss, and says so', () => {

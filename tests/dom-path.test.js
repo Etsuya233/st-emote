@@ -50,6 +50,23 @@ test('the DOM path renders a message in place', async () => {
     });
 });
 
+test('a missed raw HTML-tag token is replaced by its text, not left as an element', async () => {
+    // The raw form reaches the DOM path as a real `<sticker>` element, which is
+    // why the miss has to be swapped for a text node rather than left alone: the
+    // element is still there, and an unescaped marker put back inside it would
+    // render as a half-invisible miss.
+    await withChat(message({ mesid: 0, html: '<p>a <sticker>daily:angry</sticker> b</p>' }), ({ document, ...rest }) => {
+        const context = withSettings(rest, defaultPacks());
+        installDomRendering(context);
+        renderMessageElement(context, document.querySelector('.mes'));
+
+        const paragraph = document.querySelector('.mes .mes_text p');
+        assert.equal(document.querySelectorAll('sticker').length, 0);
+        assert.equal(paragraph.childElementCount, 0);
+        assert.equal(paragraph.textContent, 'a <sticker>daily:angry</sticker> b');
+    });
+});
+
 test('re-rendering the same message twice inserts nothing twice', async () => {
     await withChat(message({ mesid: 0, html: '<p>[[sticker:daily:happy]]</p>' }), ({ document, ...rest }) => {
         const context = withSettings(rest, defaultPacks());
@@ -415,10 +432,11 @@ test('a re-render follows the chat the client is showing, not the one captured a
     );
 });
 
-test('a sticker image that fails to load is taken out of the chat', async () => {
+test('a sticker image that fails to load gives its marker back', async () => {
     // A dead 外链 and a file that never arrived both arrive as an image that
-    // fired `error`. Removing it is what makes a 未命中 actually look like one
-    // instead of a broken-image icon sitting in the reply.
+    // fired `error`. Handing the marker back is what makes a 未命中 look like one
+    // instead of a broken-image icon sitting in the reply — and the user can see
+    // which sticker failed to draw.
     await withChat(
         message({ mesid: 0, html: '<p>[[sticker:daily:happy]] and [[sticker:daily:sad]]</p>' }),
         ({ document, ...rest }) => {
@@ -434,9 +452,39 @@ test('a sticker image that fails to load is taken out of the chat', async () => 
                 new globalThis.Event('error', { bubbles: true }),
             );
 
+            const textElement = document.querySelector('.mes .mes_text');
             const images = document.querySelectorAll(`img.${STICKER_CLASS}`);
             assert.equal(images.length, 1);
             assert.equal(images[0].getAttribute('alt'), 'sad');
+            // A text node, not a broken `<img>`: the same thing the token pass
+            // leaves behind for a miss that is known up front.
+            assert.equal(textElement.textContent, '[[sticker:daily:happy]] and ');
         },
     );
+});
+
+test('a dead 外链 gives its marker back too', async () => {
+    // The other half of the same `error` event. It is a different 未命中 reason —
+    // told apart by whether the source is one of our own files — but the same
+    // outcome, so it is worth pinning separately.
+    const withExternal = defaultPacks({
+        packs: [{
+            name: 'daily',
+            stickers: [{ label: 'wave', image: 'https://example.com/wave.gif' }],
+        }],
+    });
+    await withChat(message({ mesid: 0, html: '<p>[[sticker:daily:wave]]</p>' }), ({ document, ...rest }) => {
+        const context = withSettings(rest, withExternal);
+        installDomRendering(context);
+        installStickerImageGuard();
+        renderMessageElement(context, document.querySelector('.mes'));
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 1);
+
+        document.querySelector(`img.${STICKER_CLASS}`).dispatchEvent(
+            new globalThis.Event('error', { bubbles: true }),
+        );
+
+        assert.equal(document.querySelectorAll(`img.${STICKER_CLASS}`).length, 0);
+        assert.equal(document.querySelector('.mes .mes_text').textContent, '[[sticker:daily:wave]]');
+    });
 });
