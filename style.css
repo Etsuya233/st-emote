@@ -54,10 +54,51 @@
 }
 
 /*
- * The space above a hairline, above and below it. One rule for both separators
- * in the panel — between the three settings groups, and between the tools and the
- * data below them — so a new block joins an existing rhythm instead of inventing
- * a fourth way to be separated.
+ * The spacing a collapsible section carries — and the *only* rule one needs.
+ *
+ * The box, the animation, the chevron and the click are the client's
+ * `inline-drawer`, which is why these sections look native rather than merely
+ * similar: a hand-rolled `<details>` or a `max-height` transition here would be
+ * a second implementation of a thing the panel is already using for its own
+ * top-level drawer, and would drift from it immediately.
+ */
+.st-emote-section {
+    margin-top: var(--st-emote-gap);
+}
+
+.st-emote-section + .st-emote-section {
+    margin-top: 0;
+}
+
+/*
+ * A section that follows a group takes the group's own step instead, so a closed
+ * section does not make the panel look as though it lost a block.
+ */
+.st-emote-group + .st-emote-section {
+    margin-top: var(--st-emote-space);
+}
+
+/*
+ * The section title. The bold is the client's `.inline-drawer-header` styling,
+ * inherited by every drawer in the client — restating it here would make ours
+ * the one that disagrees if the client ever changes its own.
+ */
+.st-emote-section-title {
+    font-size: 0.9em;
+}
+
+/*
+ * The hairline between blocks: the space above and below it, and the line
+ * itself. One rule for every separator in the panel — between the three settings
+ * groups, and between the tools and the data below them — so a new block joins
+ * an existing rhythm instead of inventing a fourth way to be separated. The
+ * line sits in the middle of the gap rather than at either edge of it.
+ *
+ * **It comes after the section rules on purpose.** The debug area is both a
+ * `.st-emote-section` and a `.st-emote-debug`, the two selectors have equal
+ * specificity, and this one has to win: a closed tool section that took the
+ * block step would read as if the panel had lost a block. A rule that depended
+ * on that would be a trap for whoever edits this file next.
  */
 .st-emote-group + .st-emote-group,
 .st-emote-debug {
@@ -93,6 +134,33 @@
 .menu_button.st-emote-button {
     white-space: nowrap;
     flex: 0 0 auto;
+}
+
+/*
+ * The other half of the shared action-button rule, for the buttons that are now
+ * a glyph rather than a word.
+ *
+ * A glyph has no intrinsic width, so the client's `width: min-content` would
+ * collapse the button to the icon's box and the click target would be a
+ * character wide. `min-width` gives it a target a finger can hit; the padding
+ * and the greyscale filter are the client's own `.menu_button`, deliberately
+ * left in place so an icon button is the same object as every other button in
+ * the client rather than a second kind of thing.
+ */
+.menu_button.st-emote-button.st-emote-icon-button {
+    min-width: 2.2em;
+    justify-content: center;
+}
+
+/*
+ * One font size for every glyph on the panel. Per-button sizes would let a
+ * delete and an upload sit at different heights in the same row, which reads as
+ * a mistake rather than as a choice.
+ */
+.st-emote-icon {
+    font-size: 0.95em;
+    line-height: 1;
+    pointer-events: none;
 }
 
 .st-emote-create .text_pole,
@@ -199,21 +267,18 @@
     outline: 1px solid var(--SmartThemeQuoteColor, #c0392b);
 }
 
+/*
+ * A 尺寸集's own spacing, and nothing else. The box around it used to be a
+ * border on this element; now the section *is* a client drawer, whose header
+ * already carries the client's own bordered header styling, so a second border
+ * here would be a card inside a card.
+ */
 .st-emote-size-set {
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 5px;
-    padding: 6px 8px;
     margin-bottom: var(--st-emote-gap);
 }
 
 .st-emote-size-set:last-child {
     margin-bottom: 0;
-}
-
-.st-emote-size-set-title {
-    font-weight: bold;
-    font-size: 0.9em;
-    margin-bottom: 4px;
 }
 
 .st-emote-size-fields {
@@ -222,10 +287,54 @@
     gap: 4px;
 }
 
+/*
+ * What a 尺寸集's header has to say about its contents, in the client's own
+ * drawer header. The header is a flex row, so the marks sit between the title
+ * and the chevron and take the slack; `margin-left: auto` is what keeps them
+ * hard against the chevron when the title is short.
+ */
+.st-emote-size-set-marks {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-left: auto;
+    font-size: 0.8em;
+    opacity: 0.85;
+    white-space: nowrap;
+}
+
+.st-emote-size-set-mark {
+    padding: 0 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 3px;
+    opacity: 0.8;
+}
+
+.st-emote-size-set-invalid {
+    color: var(--SmartThemeQuoteColor, #c0392b);
+    border-color: var(--SmartThemeQuoteColor, #c0392b);
+    opacity: 1;
+}
+
 .st-emote-sticker-placement {
     flex: 0 1 9em;
     min-width: 0;
     font-size: 0.85em;
+}
+
+/*
+ * The search row: one input, full width, outside every drawer. It filters the
+ * pack list right below it, so it is the one control on the panel a user
+ * reaches for without having decided to open something first.
+ */
+.st-emote-search {
+    margin-top: var(--st-emote-space);
+    margin-bottom: var(--st-emote-gap);
+}
+
+.st-emote-search .text_pole {
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .st-emote-import {
@@ -499,18 +608,12 @@
 }
 
 /*
- * The debug area: paste a message, see it rendered, leave the chat alone.
- *
- * The output box is the one place the panel writes rendered HTML, and what lands
- * in it is the same markup a chat message gets — including the sticker images
- * themselves, so a preview shows the real size rather than a description of it.
- *
- * The hairline above it comes from the shared rule near the top of this file: the
- * debug box is a *tool* and the pack list below it is the *data*, so that line is
- * the boundary between the two rather than one more divider in a stream.
+ * The debug area's own inner block, inside the collapsed section that wraps it.
+ * The section carries the panel's spacing and the hairline; this is the content
+ * the client slides open, and it needs no rule of its own.
  */
-.st-emote-debug {
-    margin-bottom: 0;
+.st-emote-debug-body {
+    margin-bottom: var(--st-emote-gap);
 }
 
 .st-emote-debug textarea {

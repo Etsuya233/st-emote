@@ -14,12 +14,18 @@
  * keys keyed by those same values, so a value added to the core appears here
  * without anyone editing this file.
  *
+ * Each 尺寸集 is a collapsed section in the client's own drawer shape
+ * (`adapter/collapsible.js`), and 投放方式 is not: seven inputs the vast
+ * majority of users never touch are the largest block on the panel, while one
+ * select is not worth a header.
+ *
  * Every word on screen comes from `core/i18n.js`; there is no label table of
  * English sentences here to keep in step with a second language.
  */
 
 import { t } from '../core/i18n.js';
 import { PLACEMENTS } from '../core/placement.js';
+import { collapsibleSection } from './collapsible.js';
 import {
     FIT_MODES,
     SIZE_PANEL_FIELDS,
@@ -108,7 +114,18 @@ export function buildStickerPlacementSelect(context, sticker, onChange) {
 }
 
 /**
- * One 尺寸集: its hand-typed bounds plus its fill mode.
+ * One 尺寸集: its hand-typed bounds plus its fill mode, behind a header.
+ *
+ * **A 尺寸集 opens itself when it holds a value that is not a size.** The hint
+ * for a refused value sits beside the input that was refused, and a collapsed
+ * section would put that hint somewhere the user cannot see — so an invalid
+ * value would be stored, logged, and invisible. It stays open until the value
+ * is corrected or cleared, and the header says why it opened, because a panel
+ * that reopens itself for no stated reason is its own small mystery.
+ *
+ * **The header also says whether anything was typed at all.** Both sets default
+ * to seven empty fields, so two collapsed sets are indistinguishable; the one a
+ * user has customised is the one worth opening.
  *
  * @param {any} context
  * @param {import('../core/size.js').SizeSetKey} sizeSet
@@ -117,22 +134,38 @@ export function buildStickerPlacementSelect(context, sticker, onChange) {
  * @returns {Element}
  */
 function buildSizeSet(context, sizeSet, settings, onChange) {
-    const group = document.createElement('div');
-    group.className = 'st-emote-size-set';
+    const stored = settings.sizes[sizeSet];
+    const invalidField = SIZE_PANEL_FIELDS.find((field) => !validateSizeValue(stored[field]).ok);
+    const customized = SIZE_PANEL_FIELDS.some((field) => String(stored[field] ?? '').trim() !== '');
 
-    const title = document.createElement('div');
-    title.className = 'st-emote-size-set-title';
-    title.textContent = t(SIZE_SET_TITLE_KEYS[sizeSet]);
-    group.append(title);
+    const { section, toggle, content, icon } = collapsibleSection({
+        title: t(SIZE_SET_TITLE_KEYS[sizeSet]),
+        className: 'st-emote-size-set',
+        open: invalidField !== undefined,
+    });
+
+    // The client's drawer header wants the chevron as its last child, so
+    // whatever the header says goes in front of it — and after the title, so
+    // the title is still the first thing there.
+    const marks = document.createElement('span');
+    marks.className = 'st-emote-size-set-marks';
+    toggle.insertBefore(marks, icon);
+    if (customized) {
+        marks.append(sizeSetMark(t('size.customized')));
+    }
+    if (invalidField !== undefined) {
+        marks.append(sizeSetMark(t('size.openedBecauseInvalid'), 'st-emote-size-set-invalid'));
+        toggle.title = t('size.openedBecauseInvalid');
+    }
 
     const fields = document.createElement('div');
     fields.className = 'st-emote-size-fields';
-    group.append(fields);
+    content.append(fields);
 
     const invalidHint = t('size.invalidHint');
     for (const field of SIZE_PANEL_FIELDS) {
         if (field === 'fit') {
-            fields.append(buildFitField(context, settings.sizes[sizeSet].fit, (fit) => {
+            fields.append(buildFitField(context, stored.fit, (fit) => {
                 ensureSettings(context).sizes[sizeSet].fit = fit;
                 onChange();
             }));
@@ -142,7 +175,7 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
             t(SIZE_FIELD_LABEL_KEYS[field]),
             defaultSizeValue(sizeSet, field) || '—',
         );
-        input.value = settings.sizes[sizeSet][field];
+        input.value = stored[field];
         input.addEventListener('change', () => {
             const result = validateSizeValue(input.value);
             // Stored verbatim, valid or not: an unusable value is treated as
@@ -165,7 +198,21 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
         fields.append(wrapper);
     }
 
-    return group;
+    return section;
+}
+
+/**
+ * A short word on a 尺寸集's header, where there is no room for a sentence.
+ *
+ * @param {string} text
+ * @param {string} [className]
+ * @returns {Element}
+ */
+function sizeSetMark(text, className = '') {
+    const element = document.createElement('span');
+    element.className = `st-emote-size-set-mark ${className}`.trim();
+    element.textContent = text;
+    return element;
 }
 
 /**

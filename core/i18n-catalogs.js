@@ -61,6 +61,13 @@ const EN = {
         + 'Enable a pack globally, per character or per chat to render a token in AI replies.',
     'panel.introTokenCaption': 'A token looks like',
     'panel.tokenExample': '[[sticker:pack:label]]',
+    // The panel's buttons are glyphs rather than words (ticket 11), which is a
+    // trade the user is entitled to be told about in one place rather than
+    // discovering one button at a time.
+    'panel.iconHint':
+        'The buttons below are icons: hover one to see what it does, and the same '
+        + 'sentence is what a screen reader announces. The sections that hold an '
+        + 'explanation or a sample start closed — open one when you need it.',
     'panel.renderUser': 'Render stickers in user messages',
     'panel.enabled': 'Render stickers at all',
     'panel.enabledHint':
@@ -85,6 +92,14 @@ const EN = {
         'Move a whole pack around: export writes one zip with the images and their '
         + 'labels, descriptions and placement overrides; import takes such a zip back. '
         + 'An imported pack is not enabled anywhere until you say so.',
+    // The four titles below are the only new sentences in this catalog that are
+    // not a button label: a collapsible section needs a heading, and the keys
+    // above it are the sections' *hints* — paragraphs meant to be read with the
+    // thing they explain, not titles for a closed bar.
+    'panel.macroTitle': 'Listing macro',
+    'panel.regexTitle': 'Context-clearing regex',
+    'panel.transferTitle': 'Import and export a pack',
+    'panel.debugTitle': 'Try rendering / re-render',
     'panel.macroHint': 'Write one of these in your own preset to get the sticker listing:',
     'panel.macroExample':
         '{{st-emote}}       one "pack:label (description)" per line\n'
@@ -172,6 +187,11 @@ const EN = {
     'size.marginX': 'Gap between stickers (left/right)',
     'size.marginY': 'Gap between stickers (top/bottom)',
     'size.invalidHint': 'needs a number with em, px or %',
+    // The two below mark a 尺寸集 in a collapsed panel, where its seven fields
+    // cannot be seen: whether anything was typed into it, and that it opened
+    // itself because a value in it is not a size.
+    'size.customized': 'changed',
+    'size.openedBecauseInvalid': 'one value here is not a size — opened so you can see which',
 
     // ── 标记形态 ───────────────────────────────────────────────────────────
     'form.label': 'Token forms',
@@ -320,6 +340,9 @@ const ZH_CN = {
         + 'AI 回复里的标记就会渲染成图片。',
     'panel.introTokenCaption': '标记的样子：',
     'panel.tokenExample': '[[sticker:表情包名:标签]]',
+    'panel.iconHint':
+        '下面那些按钮是图标：悬停一个就知道它是做什么的，读屏念出的也是同一句话。'
+        + '带说明或示例的区块默认收起——需要的时候再展开。',
     'panel.renderUser': '在用户消息里也渲染表情',
     'panel.enabled': '总开关：渲染表情',
     'panel.enabledHint':
@@ -341,6 +364,10 @@ const ZH_CN = {
     'panel.transferHint':
         '整包搬移：导出会写出一个 zip，含图片以及它们的标签、描述与投放方式覆盖；'
         + '导入把这样的 zip 读回来。导入的包在你启用之前不进入任何作用域。',
+    'panel.macroTitle': '清单宏',
+    'panel.regexTitle': '只从上下文清掉标记的正则',
+    'panel.transferTitle': '导入 / 导出一个表情包',
+    'panel.debugTitle': '试渲染 / 重新渲染',
     'panel.macroHint': '在你自己的预设里写下面任意一个，就能拿到表情清单：',
     'panel.macroExample':
         '{{st-emote}}       每行一个「表情包名:标签 (描述)」\n'
@@ -424,6 +451,8 @@ const ZH_CN = {
     'size.marginX': '表情之间的空隙（左右）',
     'size.marginY': '表情之间的空隙（上下）',
     'size.invalidHint': '需要数字加 em、px 或 %',
+    'size.customized': '已改过',
+    'size.openedBecauseInvalid': '这里有一个值不是尺寸——已展开，方便你看是哪一项',
 
     // ── 标记形态 ───────────────────────────────────────────────────────────
     'form.label': '标记形态',

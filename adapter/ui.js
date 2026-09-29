@@ -51,6 +51,8 @@ import { t } from '../core/i18n.js';
 import { normalizeLabel } from '../core/normalize.js';
 import { importFailureMessage, planImport } from '../core/manifest.js';
 import { buildPackArchive, downloadBlob, readPackArchive } from './archive.js';
+import { filePickerButton, iconButton, iconize } from './buttons.js';
+import { collapseBlock } from './collapsible.js';
 import { mountDebugSection } from './debug-panel.js';
 import { askForText, confirmWithUser, copyText, toast } from './dialogs.js';
 import { useClientLocale } from './locale.js';
@@ -208,6 +210,7 @@ function panelSkeleton() {
         '</div>',
         '<div class="inline-drawer-content">',
         '<div class="st-emote-hint" id="st_emote_intro"></div>',
+        '<div class="st-emote-hint" id="st_emote_icon_hint"></div>',
         // Three groups rather than one column of equal-density controls: 处理
         // (what gets rendered at all), 标记 (what the token is written with) and
         // 外观 (where a rendered one lands and how big it is). The grouping is
@@ -249,6 +252,10 @@ function panelSkeleton() {
         '<select class="text_pole" id="st_emote_placement"></select>',
         '</label>',
         '</div>',
+        // The two 尺寸集 fill this one container, each as a collapsed section of
+        // its own (see `mountSizingSection`). 投放方式 stays outside them: one
+        // select does not deserve a drawer, and the 外观 group as a whole is the
+        // one section of the panel that never closes.
         '<div id="st_emote_sizes" class="st-emote-sizes"></div>',
         '</div>',
         '<div class="st-emote-create">',
@@ -256,15 +263,32 @@ function panelSkeleton() {
         '<div class="menu_button st-emote-button" id="st_emote_create_pack"></div>',
         '</div>',
         '<div id="st_emote_missing" class="st-emote-missing"></div>',
+        // The three explanation blocks, each wrapped in a collapsed section once
+        // the panel mounts: a paragraph plus a sample is a page of panel nobody
+        // reads, and it is the same text once they open it. The wrappers carry
+        // ids so the sections can be built around the markup below rather than
+        // this file spelling the drawer out three times.
+        '<div id="st_emote_macro_block">',
         '<div class="st-emote-hint" id="st_emote_macro_hint"></div>',
         '<pre class="st-emote-code" id="st_emote_macro_example"></pre>',
+        '</div>',
+        '<div id="st_emote_regex_block">',
         '<div class="st-emote-hint" id="st_emote_regex_hint"></div>',
         '<pre class="st-emote-code" id="st_emote_regex"></pre>',
         '<div class="menu_button st-emote-button" id="st_emote_copy_regex"></div>',
+        '</div>',
+        '<div id="st_emote_transfer_block">',
         '<div class="st-emote-hint" id="st_emote_transfer_hint"></div>',
         '<div class="st-emote-import">',
-        '<input type="text" class="text_pole" id="st_emote_search">',
         '<div class="menu_button st-emote-button" id="st_emote_import_pack"></div>',
+        '</div>',
+        '</div>',
+        // The search box stays outside every drawer on purpose: it filters the
+        // pack list right below it, so a user reaching for it is looking for a
+        // sticker rather than for an explanation, and hiding it behind a header
+        // would make the most-used control on the panel the hardest to find.
+        '<div class="st-emote-search">',
+        '<input type="text" class="text_pole" id="st_emote_search">',
         '</div>',
         '<div id="st_emote_packs" class="st-emote-packs"></div>',
         '</div>',
@@ -314,6 +338,7 @@ export function mountSettingsPanel(context) {
     const refresh = () => renderPackList(context, packContainer, missingContainer, refresh);
 
     fillIntro(context, root.querySelector('#st_emote_intro'));
+    root.querySelector('#st_emote_icon_hint').textContent = t('panel.iconHint');
     root.querySelector('#st_emote_size_hint').textContent = t('panel.sizeHint');
     root.querySelector('#st_emote_placement_label').textContent = t('placement.label');
     root.querySelector('#st_emote_render_user_label').textContent = t('panel.renderUser');
@@ -324,14 +349,25 @@ export function mountSettingsPanel(context) {
     root.querySelector('#st_emote_tag_form_label').textContent = t('form.tag');
     root.querySelector('#st_emote_tag_name_label').textContent = `${t('panel.tagName')}:`;
     root.querySelector('#st_emote_new_pack').placeholder = t('panel.newPackName');
-    root.querySelector('#st_emote_create_pack').textContent = t('panel.createPack');
+    // The three actions that live in the fixed skeleton get their glyph the
+    // same way, rather than by being built here: they keep the ids their
+    // listeners and the control-surface test find them by, and the sentences
+    // come from the same catalog keys the buttons used to paint as text.
+    iconize(root.querySelector('#st_emote_create_pack'), 'createPack', t('panel.createPack'));
+    iconize(root.querySelector('#st_emote_copy_regex'), 'copyRegex', t('panel.copyRegex'));
+    iconize(root.querySelector('#st_emote_import_pack'), 'importPack', t('panel.importPack'));
     root.querySelector('#st_emote_macro_hint').textContent = t('panel.macroHint');
     root.querySelector('#st_emote_macro_example').textContent = t('panel.macroExample');
     root.querySelector('#st_emote_regex_hint').textContent = t('panel.regexHint');
-    root.querySelector('#st_emote_copy_regex').textContent = t('panel.copyRegex');
     root.querySelector('#st_emote_transfer_hint').textContent = t('panel.transferHint');
     searchInput.placeholder = t('panel.searchPlaceholder');
-    root.querySelector('#st_emote_import_pack').textContent = t('panel.importPack');
+    // The three explanation blocks become collapsed sections here rather than in
+    // the skeleton: the drawer markup is the client's, and building it in one
+    // place is what keeps the four sections (these three plus the debug area)
+    // from drifting into four slightly different widgets.
+    collapseBlock(root.querySelector('#st_emote_macro_block'), t('panel.macroTitle'));
+    collapseBlock(root.querySelector('#st_emote_regex_block'), t('panel.regexTitle'));
+    collapseBlock(root.querySelector('#st_emote_transfer_block'), t('panel.transferTitle'));
     // The debug area sits above the library: it is a tool for tuning the settings
     // further up, and the pack list below it is the longest thing on the page.
     root.querySelector('#st_emote_packs').before(mountDebugSection(context, root));
@@ -476,61 +512,6 @@ const PACK_STATE_LABEL_KEYS = {
 };
 
 /**
- * A small labelled button, the shape almost every action in a pack row uses.
- *
- * `st-emote-button` goes on every one of them and is the single rule that keeps
- * an action's label on one line: the client's own `.menu_button` is a flex
- * column, so a button with no room turns its label into a two-, three- or
- * four-line block. One hook means the pack header, a sticker row and the debug
- * area cannot drift apart, and a button added later is covered without being
- * told about it.
- *
- * @param {string} label
- * @param {string} [className]
- * @returns {HTMLDivElement}
- */
-function actionButton(label, className = '') {
-    const button = document.createElement('div');
-    button.className = `menu_button st-emote-button ${className}`.trim();
-    button.textContent = label;
-    return button;
-}
-
-/**
- * A button that opens a file dialog and hands the chosen files to `onFiles`.
- *
- * @param {string} label
- * @param {{accept?: string, multiple?: boolean, className?: string}} options
- * @param {(files: File[]) => void|Promise<void>} onFiles
- * @returns {Element}
- */
-function filePickerButton(label, options, onFiles) {
-    const button = actionButton(label, options.className);
-    const input = document.createElement('input');
-    input.type = 'file';
-    if (options.accept) {
-        input.accept = options.accept;
-    }
-    input.multiple = options.multiple === true;
-    input.style.display = 'none';
-    input.addEventListener('change', async () => {
-        const files = Array.from(input.files ?? []);
-        // Cleared before the work starts, so picking the same file twice in a
-        // row still fires a change event.
-        input.value = '';
-        if (files.length > 0) {
-            await onFiles(files);
-        }
-    });
-    button.addEventListener('click', () => input.click());
-
-    const wrapper = document.createElement('span');
-    wrapper.className = 'st-emote-action';
-    wrapper.append(button, input);
-    return wrapper;
-}
-
-/**
  * @param {any} context
  * @param {Element} packContainer
  * @param {Element} missingContainer
@@ -586,7 +567,12 @@ function renderMissingPacks(context, settings, container, refresh) {
     list.textContent = missing.join(', ');
     container.append(list);
 
-    const button = actionButton(t('panel.createMissingPacks'));
+    // No per-action hook class here, unlike every other action button: this one
+    // used to have none either, and the control-surface snapshot is the guard
+    // for "the panel offers what it offered before" — a class added to one
+    // button would rewrite that line for no gain, since the whole block already
+    // has an id a test can reach it by.
+    const button = iconButton('createMissingPacks', t('panel.createMissingPacks'));
     button.addEventListener('click', () => {
         const current = ensureSettings(context);
         for (const name of missing) {
@@ -656,23 +642,24 @@ function buildPackElement(context, pack, visible, refresh, searching = false) {
     const actions = document.createElement('div');
     actions.className = 'st-emote-actions';
     actions.append(filePickerButton(
+        'uploadImages',
         t('pack.uploadImages'),
         { accept: ACCEPTED_MIME, multiple: true, className: 'st-emote-upload' },
         (files) => handleUploads(context, pack, files, refresh),
     ));
-    const addUrl = actionButton(t('pack.addImageUrl'), 'st-emote-add-url');
+    const addUrl = iconButton('addImageUrl', t('pack.addImageUrl'), 'st-emote-add-url');
     actions.append(addUrl);
     addUrl.addEventListener('click', async () => {
         await handleExternalUrl(context, pack, refresh);
     });
 
     if (!searching) {
-        const exportButton = actionButton(t('pack.exportZip'), 'st-emote-export');
+        const exportButton = iconButton('exportZip', t('pack.exportZip'), 'st-emote-export');
         actions.append(exportButton);
         exportButton.addEventListener('click', async () => {
             await handleExport(context, pack);
         });
-        const deleteButton = actionButton(t('pack.deletePack'), 'st-emote-delete-pack');
+        const deleteButton = iconButton('deletePack', t('pack.deletePack'), 'st-emote-delete-pack');
         actions.append(deleteButton);
         deleteButton.addEventListener('click', async () => {
             await handleDeletePack(context, pack, refresh);
@@ -826,7 +813,8 @@ function buildSelectionBar(context, pack, visible, refresh, searching) {
     bar.append(count);
 
     if (chosen > 0) {
-        const remove = actionButton(
+        const remove = iconButton(
+            'deleteSelected',
             t('pack.deleteSelected', { count: chosen }),
             'st-emote-delete-selected',
         );
@@ -1042,6 +1030,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     const actions = document.createElement('div');
     actions.className = 'st-emote-actions';
     actions.append(filePickerButton(
+        'replaceImage',
         t('sticker.replace'),
         { accept: ACCEPTED_MIME, className: 'st-emote-replace' },
         async (files) => {
@@ -1050,7 +1039,7 @@ function buildStickerElement(context, pack, sticker, refresh, searching) {
     ));
 
     if (!searching) {
-        const remove = actionButton(t('sticker.delete'), 'st-emote-sticker-delete');
+        const remove = iconButton('deleteSticker', t('sticker.delete'), 'st-emote-sticker-delete');
         remove.addEventListener('click', async () => {
             await handleStickerDelete(context, pack, sticker, refresh);
         });
