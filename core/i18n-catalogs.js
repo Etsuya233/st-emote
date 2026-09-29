@@ -82,9 +82,9 @@ const EN = {
         + 'An imported pack is not enabled anywhere until you say so.',
     'panel.macroHint': 'Write one of these in your own preset to get the sticker listing:',
     'panel.macroExample':
-        '{{st-emote}}       one "pack:label" per line\n'
-        + '{{st-emote::simple}}   bare labels only\n'
-        + '{{st-emote::full}}     same as {{st-emote}}',
+        '{{st-emote}}       one "pack:label (description)" per line\n'
+        + '{{st-emote::full}}     same as {{st-emote}}\n'
+        + '{{st-emote::simple}}   one "pack:label" per line, no description',
     'panel.regexHint':
         'Clear tokens from the context only (the chat still shows the images). '
         + 'Copy this JSON and import it into the Regex extension with "Import To: Global".',
@@ -282,9 +282,12 @@ const EN = {
     'macro.missing': 'No macro API available; {{st-emote}} will not expand.',
     'macro.description': 'Lists the stickers available to the current scopes, one row per sticker.',
     'macro.returns':
-        'One "pack:label" row per sticker. With "simple" it prints bare labels. '
-        + 'An empty set prints the word for "none".',
-    'macro.modeDescription': 'Listing mode: "simple" prints bare labels, "full" prints "pack:label".',
+        'One "pack:label (description)" row per sticker, with the parentheses '
+        + 'omitted when there is no description. With "simple" it prints "pack:label" '
+        + 'rows. An empty set prints the word for "none".',
+    'macro.modeDescription':
+        'Listing mode: "full" prints "pack:label (description)", "simple" prints '
+        + '"pack:label".',
 };
 const ZH_CN = {
     // ── 面板 ───────────────────────────────────────────────────────────────
@@ -312,9 +315,9 @@ const ZH_CN = {
         + '导入把这样的 zip 读回来。导入的包在你启用之前不进入任何作用域。',
     'panel.macroHint': '在你自己的预设里写下面任意一个，就能拿到表情清单：',
     'panel.macroExample':
-        '{{st-emote}}       每行一个「表情包名:标签」\n'
-        + '{{st-emote::simple}}   只列标签\n'
-        + '{{st-emote::full}}     与 {{st-emote}} 相同',
+        '{{st-emote}}       每行一个「表情包名:标签 (描述)」\n'
+        + '{{st-emote::full}}     与 {{st-emote}} 相同\n'
+        + '{{st-emote::simple}}   每行一个「表情包名:标签」，不带描述',
     'panel.regexHint':
         '只把标记从上下文里清掉（聊天里仍然显示图片）。'
         + '复制这段 JSON，在正则扩展里以 "Import To: Global" 导入。',
@@ -499,8 +502,10 @@ const ZH_CN = {
     // ── 一次性提示 ─────────────────────────────────────────────────────────
     'macro.missing': '没有可用的宏接口，{{st-emote}} 不会展开。',
     'macro.description': '列出当前作用域可用的表情，一行一个。',
-    'macro.returns': '每行一个「表情包名:标签」。用 "simple" 时只列标签。生效集为空时展开成「无」。',
-    'macro.modeDescription': '清单档位："simple" 只列标签，"full" 列「表情包名:标签」。',
+    'macro.returns':
+        '每行一个「表情包名:标签 (描述)」，描述为空时省略括号。用 "simple" 时只列「表情包名:标签」。'
+        + '生效集为空时展开成「无」。',
+    'macro.modeDescription': '清单档位："full" 列「表情包名:标签 (描述)」，"simple" 只列「表情包名:标签」。',
 };
 
 /**

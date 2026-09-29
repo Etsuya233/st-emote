@@ -20,11 +20,11 @@ const packs = [
     },
 ];
 
-test('the default listing qualifies every row with its pack name', () => {
+test('the default listing qualifies every row with its pack name and its description', () => {
     const set = buildEffectiveSet(packs, ['daily', 'roleplay']);
     assert.equal(
         buildListing(set),
-        'daily:Happy\ndaily:Sad Face\nroleplay:happy',
+        'daily:Happy (a wide grin)\ndaily:Sad Face (teary)\nroleplay:happy (overlaps daily)',
     );
 });
 
@@ -33,21 +33,54 @@ test('the full listing matches the default listing', () => {
     assert.equal(buildListing(set, { mode: 'full' }), buildListing(set));
 });
 
-test('the simple listing prints bare labels and keeps conflicts as duplicates', () => {
+test('the simple listing qualifies every row and never carries a description', () => {
     const set = buildEffectiveSet(packs, ['daily', 'roleplay']);
-    assert.equal(buildListing(set, { mode: 'simple' }), 'Happy\nSad Face\nhappy');
+    const listing = buildListing(set, { mode: 'simple' });
+    assert.equal(listing, 'daily:Happy\ndaily:Sad Face\nroleplay:happy');
+    assert.equal(listing.includes('grin'), false);
+    assert.equal(listing.includes('teary'), false);
+    assert.equal(listing.includes('overlaps daily'), false);
+});
+
+test('a label two packs both define is two rows of different text, not a duplicate', () => {
+    // `Happy` and `happy` normalize to the same label, which is a 冲突. The old
+    // `simple` printed bare labels and so printed the same line twice; the pack
+    // name in front is what tells the two rows apart now.
+    const set = buildEffectiveSet(packs, ['daily', 'roleplay']);
+    const rows = buildListing(set, { mode: 'simple' }).split('\n');
+    assert.equal(rows.length, 3);
+    assert.equal(new Set(rows).size, 3);
+});
+
+test('a sticker with no description prints the same row in both modes', () => {
+    const withBlank = [
+        {
+            name: 'daily',
+            stickers: [
+                { label: 'happy', description: '', image: 'user/images/st-emote/a.png' },
+                { label: 'sad', description: '   ', image: 'user/images/st-emote/b.png' },
+            ],
+        },
+    ];
+    const set = buildEffectiveSet(withBlank, ['daily']);
+    assert.equal(buildListing(set, { mode: 'full' }), 'daily:happy\ndaily:sad');
+    assert.equal(buildListing(set, { mode: 'full' }), buildListing(set, { mode: 'simple' }));
 });
 
 test('an unknown mode falls back to the full listing', () => {
     const set = buildEffectiveSet(packs, ['daily']);
-    assert.equal(buildListing(set, { mode: 'nonsense' }), 'daily:Happy\ndaily:Sad Face');
+    assert.equal(
+        buildListing(set, { mode: 'nonsense' }),
+        'daily:Happy (a wide grin)\ndaily:Sad Face (teary)',
+    );
 });
 
-test('the listing never contains a description', () => {
+test('one sticker is one line, because a description cannot hold a line break', () => {
+    // The listing is a prompt-injected list; a description that carried a
+    // newline would put a line on screen that names no sticker at all.
+    // `validateDescription` refuses one, and the row count is what proves it.
     const set = buildEffectiveSet(packs, ['daily', 'roleplay']);
-    const listing = buildListing(set, { mode: 'simple' });
-    assert.equal(listing.includes('grin'), false);
-    assert.equal(listing.includes('teary'), false);
+    assert.equal(buildListing(set).split('\n').length, 3);
 });
 
 test('an empty effective set expands to the localized empty word', () => {
@@ -67,6 +100,6 @@ test('rows follow the enabled order of the effective set', () => {
     const set = buildEffectiveSet(packs, ['roleplay', 'daily']);
     assert.equal(
         buildListing(set, { mode: 'simple' }),
-        'happy\nHappy\nSad Face',
+        'roleplay:happy\ndaily:Happy\ndaily:Sad Face',
     );
 });
