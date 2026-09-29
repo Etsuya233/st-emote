@@ -189,7 +189,7 @@ test('the hook renders a message the way the DOM path would', () => {
     assert.equal(
         hook('<p>She grins. [[sticker:daily:happy]]</p>', { messageId: 0 }),
         '<p>She grins. <img class="st-emote" src="user/images/st-emote/happy.png" alt="happy"'
-        + ' style="max-height: 3em; object-fit: contain" data-st-emote-pack="daily"'
+        + ' style="max-height: 3em; object-fit: contain; margin: 0 0.15em" data-st-emote-pack="daily"'
         + ' data-st-emote-label="happy" data-st-emote-token="[[sticker:daily:happy]]"'
         + ' data-st-emote-placement="in-place"></p>',
     );
@@ -204,6 +204,27 @@ test('the hook applies 块后 in the string, so the DOM never has to', () => {
         );
     } finally {
         client.context.extensionSettings['st-emote'] = defaultPacks();
+    }
+});
+
+test('the hook honours a 标记 form that is switched off, leaving the text as written', () => {
+    // A disabled form is not grammar, so the hook passes the message through
+    // rather than matching a token it will never render. Each form on its own
+    // first, then both, because "the other one still works" and "neither does"
+    // are separate claims.
+    const source = '<p>[[sticker:daily:happy]] and <sticker>daily:sad</sticker></p>';
+    const settings = client.context.extensionSettings['st-emote'];
+    const saved = { bracketForm: settings.bracketForm, tagForm: settings.tagForm };
+    try {
+        settings.bracketForm = false;
+        assert.match(hook(source, { messageId: 0 }), /<img /, 'the tag form still renders');
+        settings.tagForm = false;
+        assert.equal(hook(source, { messageId: 0 }), source);
+        settings.bracketForm = true;
+        assert.match(hook(source, { messageId: 0 }), /<img /, 'the bracket form still renders');
+        assert.match(hook(source, { messageId: 0 }), /data-st-emote-label="happy"/);
+    } finally {
+        Object.assign(settings, saved);
     }
 });
 

@@ -262,9 +262,12 @@ test('a sticker overrides the global placement and switches size set with it', (
         set,
         { placement: 'in-place', sizes: { block: { maxWidth: '50%' } } },
     );
-    assert.match(html, new RegExp(`class="${STICKER_CLASS}"[^>]*style="max-height: 3em; object-fit: contain"`));
     assert.match(html, new RegExp(
-        `class="${STICKER_CLASS} ${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}"[^>]*style="max-width: 50%; object-fit: contain"`,
+        `class="${STICKER_CLASS}"[^>]*style="max-height: 3em; object-fit: contain; margin: 0 0.15em"`,
+    ));
+    assert.match(html, new RegExp(
+        `class="${STICKER_CLASS} ${STICKER_CLASS}${STICKER_BLOCK_SUFFIX}"[^>]*`
+        + 'style="max-width: 50%; object-fit: contain; margin: 0.25em 0"',
     ));
     // The overriding sticker left the paragraph; the in-place one stayed in it.
     assert.match(html, /^<p>a <img [^>]*> b {2}c<\/p><img /);

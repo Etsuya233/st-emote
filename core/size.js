@@ -1,7 +1,8 @@
 /**
  * 尺寸集 (Size set): the size configuration for one kind of sticker. There are
  * two — `inline` for 原地 images, `block` for 块后 and 消息末尾 images — and
- * each is a minimum/maximum width and height plus a fill mode.
+ * each is a minimum/maximum width and height, a fill mode, and a pair of 间隙
+ * fields that put visible space between neighbouring stickers.
  *
  * Values are hand-typed strings that are handed to CSS verbatim. A value that
  * is not a `<number><em|px|%>` pair is *not* an error that blocks editing: it
@@ -22,8 +23,9 @@ export const FIT_MODES = ['cover', 'contain', 'fill'];
 export const DEFAULT_FIT = 'contain';
 
 /**
- * Stored field name -> CSS property. The stored names are camelCase to match
- * the rest of the settings payload; the emitted ones are the CSS properties.
+ * Stored field name -> CSS property, for the fields that are a one-to-one map.
+ * The stored names are camelCase to match the rest of the settings payload; the
+ * emitted ones are the CSS properties.
  */
 const SIZE_PROPERTIES = {
     minWidth: 'min-width',
@@ -37,13 +39,42 @@ const SIZE_PROPERTIES = {
 export const SIZE_FIELDS = Object.keys(SIZE_PROPERTIES);
 
 /**
- * Values applied for fields the user left empty. `inline` keeps images in the
- * text line, so its only promise is a height; `block` images must not push the
- * layout wider than the message column.
+ * The 间隙 fields. They are stored, validated and bound to a panel input like
+ * every other field, but they are *not* in `SIZE_PROPERTIES`: two of them
+ * collapse into one declaration, so there is no single CSS property to name.
+ *
+ * `margin-inline` / `margin-block` would make them a genuine one-to-one pair and
+ * leave `SIZE_FIELDS` as the whole story, but it would also mean betting that
+ * those two logical properties survive the client's sanitizer inside a `style`
+ * attribute — and a bet this project keeps declining (see `common_dev.md` on
+ * what can only be verified in a real client). One extra explicit step in
+ * `evaluateSize` is cheaper than being wrong on a class of clients where we
+ * cannot tell.
+ */
+export const SIZE_MARGIN_FIELDS = ['marginX', 'marginY'];
+
+/** The margin shorthand the two fields above are emitted as. */
+const MARGIN_PROPERTY = 'margin';
+
+/**
+ * Every stored field, in panel order: the one-to-one map followed by the two
+ * 间隙 fields. The panel binds one input per entry, and `ensureSizeSet` gives
+ * the stored shape the same list, so a field cannot exist in the settings
+ * without a control for it.
+ */
+export const SIZE_PANEL_FIELDS = [...SIZE_FIELDS, ...SIZE_MARGIN_FIELDS];
+
+/**
+ * Values applied for fields the user left empty, keyed by **stored field
+ * name** so the keys line up with `SIZE_PROPERTIES` and the two margin fields
+ * are addressable at all. `inline` keeps images in the text line, so its only
+ * promise is a height plus a little breathing room on each side; `block` images
+ * must not push the layout wider than the message column, and the gap between
+ * stacked blocks is vertical.
  */
 export const SIZE_DEFAULTS = {
-    inline: { 'max-height': '3em' },
-    block: { 'max-width': '100%' },
+    inline: { maxHeight: '3em', marginX: '0.15em', marginY: '0' },
+    block: { maxWidth: '100%', marginX: '0', marginY: '0.25em' },
 };
 
 /**
@@ -66,6 +97,8 @@ const SIZE_VALUE_PATTERN = /^(?:0|\d*\.?\d+(?:em|px|%))$/i;
  * @property {string} maxHeight
  * @property {string} fit - `cover` / `contain` / `fill`, or empty for the
  *   default fill mode.
+ * @property {string} marginX - Horizontal 间隙 between neighbouring stickers.
+ * @property {string} marginY - Vertical 间隙 between neighbouring stickers.
  */
 
 /**
@@ -157,7 +190,7 @@ export function validateFitMode(value) {
 export function ensureSizeSet(raw) {
     const source = raw && typeof raw === 'object' ? raw : {};
     const set = {};
-    for (const field of SIZE_FIELDS) {
+    for (const field of SIZE_PANEL_FIELDS) {
         set[field] = typeof source[field] === 'string' ? source[field] : '';
     }
     return set;
@@ -189,7 +222,7 @@ export function readSizeSet(raw) {
     const source = ensureSizeSet(raw);
     const invalid = [];
     const set = {};
-    for (const field of SIZE_FIELDS) {
+    for (const field of SIZE_PANEL_FIELDS) {
         const check = field === 'fit' ? validateFitMode(source[field]) : validateSizeValue(source[field]);
         if (check.ok) {
             set[field] = check.value;
@@ -211,7 +244,7 @@ export function readSizeSet(raw) {
  * @returns {string}
  */
 export function defaultSizeValue(sizeSet, field) {
-    return SIZE_DEFAULTS[resolveSizeSetKey(sizeSet)][SIZE_PROPERTIES[String(field)]] ?? '';
+    return SIZE_DEFAULTS[resolveSizeSetKey(sizeSet)][String(field)] ?? '';
 }
 
 /**
@@ -232,12 +265,22 @@ export function evaluateSize(sizeSet, sizes) {
 
     const declarations = [];
     for (const [field, property] of Object.entries(SIZE_PROPERTIES)) {
-        const value = set[field] || defaults[property] || '';
+        const value = set[field] || defaults[field] || '';
         // The fill mode always lands on the image; a size bound only appears
         // when a value or a default exists for it.
         if (value || property === 'object-fit') {
             declarations.push(`${property}: ${value || DEFAULT_FIT}`);
         }
     }
+    // The one field that is not a one-to-one map: the two 间隙 fields collapse
+    // into a single shorthand, in CSS's own order (vertical first). They are
+    // handled here rather than in `SIZE_PROPERTIES` because two fields with one
+    // property between them cannot be expressed as a map — and because the
+    // declaration is unconditional: the 间隙 has exactly one source, this one.
+    // A `margin` in `style.css` would be a second source, and a second source
+    // is a class of bug that is very hard to find later.
+    const marginY = set.marginY || defaults.marginY || '0';
+    const marginX = set.marginX || defaults.marginX || '0';
+    declarations.push(`${MARGIN_PROPERTY}: ${marginY} ${marginX}`);
     return { sizeSet: which, style: declarations.join('; '), invalid };
 }

@@ -9,8 +9,10 @@
  * size is not a size.
  *
  * The two 尺寸集 are enumerated from `SIZE_SETS` and the fields from
- * `SIZE_FIELDS`, and their labels are catalog keys keyed by those same values, so
- * a value added to the core appears here without anyone editing this file.
+ * `SIZE_PANEL_FIELDS` — every stored field, which is `SIZE_FIELDS` plus the two
+ * 间隙 fields that collapse into one declaration — and their labels are catalog
+ * keys keyed by those same values, so a value added to the core appears here
+ * without anyone editing this file.
  *
  * Every word on screen comes from `core/i18n.js`; there is no label table of
  * English sentences here to keep in step with a second language.
@@ -20,7 +22,7 @@ import { t } from '../core/i18n.js';
 import { PLACEMENTS } from '../core/placement.js';
 import {
     FIT_MODES,
-    SIZE_FIELDS,
+    SIZE_PANEL_FIELDS,
     SIZE_SETS,
     defaultSizeValue,
     validateFitMode,
@@ -54,6 +56,8 @@ const SIZE_FIELD_LABEL_KEYS = {
     maxWidth: 'size.maxWidth',
     maxHeight: 'size.maxHeight',
     fit: 'size.fit',
+    marginX: 'size.marginX',
+    marginY: 'size.marginY',
 };
 
 /**
@@ -126,7 +130,7 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
     group.append(fields);
 
     const invalidHint = t('size.invalidHint');
-    for (const field of SIZE_FIELDS) {
+    for (const field of SIZE_PANEL_FIELDS) {
         if (field === 'fit') {
             fields.append(buildFitField(context, settings.sizes[sizeSet].fit, (fit) => {
                 ensureSettings(context).sizes[sizeSet].fit = fit;

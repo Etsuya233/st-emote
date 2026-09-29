@@ -62,6 +62,11 @@ const EN = {
     'panel.introTokenCaption': 'A token looks like',
     'panel.tokenExample': '[[sticker:pack:label]]',
     'panel.renderUser': 'Render stickers in user messages',
+    'panel.enabled': 'Render stickers at all',
+    'panel.enabledHint':
+        'Turning this off puts every sticker already on screen back to its marker, and the '
+        + '{{st-emote}} listing macro expands to nothing — with rendering off, a listing '
+        + 'would only invite the model to write tokens that never appear.',
     'panel.tagName': 'HTML tag form',
     'panel.sizeHint':
         'Where a sticker shows up and how big it is. Write sizes as a number with em, px or %; '
@@ -164,7 +169,21 @@ const EN = {
     'size.maxHeight': 'Max height',
     'size.fit': 'Fill',
     'size.fitDefault': 'default',
+    'size.marginX': 'Gap between stickers (left/right)',
+    'size.marginY': 'Gap between stickers (top/bottom)',
     'size.invalidHint': 'needs a number with em, px or %',
+
+    // ── 标记形态 ───────────────────────────────────────────────────────────
+    'form.label': 'Token forms',
+    // The tag form's own name is deliberately not spelled out with angle
+    // brackets: a catalog value is plain text and is applied with `textContent`,
+    // so markup in one would be shown as the markup rather than as the tag — and
+    // the field below states the name the user configures anyway.
+    'form.bracket': 'Bracket form: [[sticker:pack:label]]',
+    'form.tag': 'HTML tag form: the tag name below, wrapping pack:label',
+    'form.bothOff':
+        'Both token forms are off, so no sticker can render at all. The macro and the '
+        + 'context-clearing regex keep working; turn one form back on to render again.',
 
     // ── field validation ───────────────────────────────────────────────────
     'constraint.packName': 'Pack name',
@@ -271,12 +290,17 @@ const EN = {
     'command.unknownPack': 'There is no pack named "{name}".',
     'command.noCharacter': 'No character card is selected, so the character scope has nowhere to go.',
     'command.needPack': 'Name a pack, for example: {command} enable pack=daily scope=chat',
-    'command.needAction': 'Say what to do: enable, disable, reload or conflicts.',
+    'command.needAction': 'Say what to do: enable, disable, on, off, reload or conflicts.',
+    'command.turnedOn':
+        'st-emote is on again. Stickers already on screen are back, and {{st-emote}} expands.',
+    'command.turnedOff':
+        'st-emote is off. Stickers on screen go back to their markers, and {{st-emote}} '
+        + 'expands to nothing until you turn it on again.',
     'command.conflictsShown': 'Conflicts: {count}. They are in the console too.',
     'command.returns': 'A confirmation sentence about what changed.',
     'command.help':
-        'Turn sticker packs on or off in one scope, reload st-emote, or list the '
-        + 'label conflicts in the effective set.',
+        'Turn sticker packs on or off in one scope, turn st-emote itself on or off, '
+        + 'reload it, or list the label conflicts in the effective set.',
 
     // ── one-off notices ────────────────────────────────────────────────────
     'macro.missing': 'No macro API available; {{st-emote}} will not expand.',
@@ -294,6 +318,10 @@ const ZH_CN = {
     'panel.introTokenCaption': '标记的样子：',
     'panel.tokenExample': '[[sticker:表情包名:标签]]',
     'panel.renderUser': '在用户消息里也渲染表情',
+    'panel.enabled': '总开关：渲染表情',
+    'panel.enabledHint':
+        '关掉后，屏幕上已经渲染出来的表情立刻退回原始标记，{{st-emote}} 清单宏也展开成空——'
+        + '渲染已经关了，还给模型一份清单，只会诱使它写一堆永远不会出现的标记。',
     'panel.tagName': 'HTML 标签形态',
     'panel.sizeHint':
         '表情图出现在哪里、显示多大。尺寸写数字加 em、px 或 %；1em 等于当前聊天的文字高度。'
@@ -390,7 +418,17 @@ const ZH_CN = {
     'size.maxHeight': '最大高度',
     'size.fit': '填充方式',
     'size.fitDefault': '默认',
+    'size.marginX': '表情之间的空隙（左右）',
+    'size.marginY': '表情之间的空隙（上下）',
     'size.invalidHint': '需要数字加 em、px 或 %',
+
+    // ── 标记形态 ───────────────────────────────────────────────────────────
+    'form.label': '标记形态',
+    'form.bracket': '标记式：[[sticker:表情包名:标签]]',
+    'form.tag': 'HTML 标签式：下面配置的标签名，包住「表情包名:标签」',
+    'form.bothOff':
+        '两种标记形态都关着，所以任何表情都不会渲染。宏与「只从上下文清掉标记」的正则仍然可用；'
+        + '打开其中一种形态即可恢复渲染。',
 
     // ── 字段校验 ───────────────────────────────────────────────────────────
     'constraint.packName': '表情包名',
@@ -491,10 +529,13 @@ const ZH_CN = {
     'command.unknownPack': '没有叫「{name}」的表情包。',
     'command.noCharacter': '当前没有选中角色卡，角色作用域无处可写。',
     'command.needPack': '请指明表情包名，例如：{command} enable pack=daily scope=chat',
-    'command.needAction': '请说明要做什么：enable、disable、reload 或 conflicts。',
+    'command.needAction': '请说明要做什么：enable、disable、on、off、reload 或 conflicts。',
+    'command.turnedOn': 'st-emote 已重新打开。屏幕上的表情回来了，{{st-emote}} 也会展开。',
+    'command.turnedOff':
+        'st-emote 已关闭。屏幕上的表情退回原始标记，{{st-emote}} 也展开成空，直到你重新打开为止。',
     'command.conflictsShown': '冲突 {count} 条，控制台里也有。',
     'command.returns': '一句说明改动了什么的话。',
-    'command.help': '在某个作用域里启停表情包、重载 st-emote，或列出生效集里的标签冲突。',
+    'command.help': '在某个作用域里启停表情包、开关 st-emote 本身、重载它，或列出生效集里的标签冲突。',
 
     // ── 一次性提示 ─────────────────────────────────────────────────────────
     'macro.missing': '没有可用的宏接口，{{st-emote}} 不会展开。',
