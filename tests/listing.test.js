@@ -75,10 +75,12 @@ test('an unknown mode falls back to the full listing', () => {
     );
 });
 
-test('one sticker is one line, because a description cannot hold a line break', () => {
-    // The listing is a prompt-injected list; a description that carried a
-    // newline would put a line on screen that names no sticker at all.
-    // `validateDescription` refuses one, and the row count is what proves it.
+test('the listing has exactly one row per labeled sticker', () => {
+    // A description that carried a line break would put a row on screen that
+    // names no sticker at all. `validateDescription` refuses one — that rule and
+    // its test live in `core/constraints.js` and `tests/constraints.test.js`, so
+    // this row count is a consequence of that rule rather than a proof of it.
+    // The unlabeled sticker in `packs` is the one that must not get a row.
     const set = buildEffectiveSet(packs, ['daily', 'roleplay']);
     assert.equal(buildListing(set).split('\n').length, 3);
 });
