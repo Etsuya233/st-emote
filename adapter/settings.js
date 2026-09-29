@@ -30,7 +30,11 @@ const SCHEMA_VERSION = 1;
  * @property {PackRecord[]} packs
  * @property {string[]} enabledPackNames - Global scope.
  * @property {string} stickerTag - Name of the HTML-tag token form.
+ * @property {boolean} enabled - The 总开关: off means the extension takes no part
+ *   in rendering at all, and the macro expands to nothing.
  * @property {boolean} renderUserMessages - Render tokens in user messages too.
+ * @property {boolean} bracketForm - Accept the `[[sticker:…]]` 标记 form.
+ * @property {boolean} tagForm - Accept the HTML-tag 标记 form.
  * @property {import('../core/placement.js').Placement} placement - Global 投放方式.
  * @property {import('../core/size.js').SizeSets} sizes - The `inline` and
  *   `block` 尺寸集, always both present after `ensureSettings`.
@@ -47,9 +51,12 @@ export function ensureSettings(context) {
     if (!store[STORAGE_KEY] || typeof store[STORAGE_KEY] !== 'object') {
         store[STORAGE_KEY] = {
             version: SCHEMA_VERSION,
+            enabled: true,
             packs: [],
             enabledPackNames: [],
             stickerTag: DEFAULT_STICKER_TAG,
+            bracketForm: true,
+            tagForm: true,
             renderUserMessages: false,
             placement: DEFAULT_PLACEMENT,
             sizes: ensureSizeSets(null),
@@ -65,6 +72,14 @@ export function ensureSettings(context) {
     if (!validateStickerTag(settings.stickerTag).ok) {
         settings.stickerTag = DEFAULT_STICKER_TAG;
     }
+    // Both the 总开关 and the two 标记 form switches default to *on*, and only
+    // an explicit `false` turns one off. A settings payload written by an older
+    // version has no such keys, and "the key is missing" must not read as "the
+    // user disabled it" — that would silently switch a working extension off on
+    // upgrade.
+    settings.enabled = settings.enabled !== false;
+    settings.bracketForm = settings.bracketForm !== false;
+    settings.tagForm = settings.tagForm !== false;
     settings.renderUserMessages = settings.renderUserMessages === true;
     if (!validatePlacement(settings.placement).ok) {
         settings.placement = DEFAULT_PLACEMENT;

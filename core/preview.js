@@ -16,6 +16,25 @@
  * A preview built on the other one showed an image exactly where the chat would
  * never put one.
  *
+ * **It deliberately ignores the 总开关.** `buildPreview` is handed `options` and
+ * does not ask `adapter/restore.js` whether rendering is on, so a preview
+ * renders stickers on a client whose 总开关 is off. That is intended, and it is
+ * the one place in this extension where "is rendering on" is not the question
+ * being asked:
+ *
+ * - The preview pastes *text*, not a chat message. It writes no message, calls no
+ *   `updateMessageBlock` and touches no chat state, so honouring the switch
+ *   would have nothing to switch off.
+ * - "Rendering is off" is exactly the state a user is most often trying to
+ *   debug — either because the switch is what they suspect, or because they want
+ *   to see what a form or a size would do before turning things on. A preview
+ *   that returned bare text then would answer nothing.
+ *
+ * The 标记 form switches, by contrast, **are** honoured, because they are
+ * settings rather than a global state: a disabled form is a form the user does
+ * not accept, and a preview that showed it would be showing a configuration
+ * nobody has.
+ *
  * **Plain text in, HTML renderer in — so the paste needs a converter.** The user
  * pastes raw text into a textarea; `renderHtml` takes the message body the
  * client's pipeline produced, because a code fence only becomes `<pre><code>`
