@@ -9,7 +9,7 @@
 - **名称**：st-emote
 - **形态**：SillyTavern 扩展
 - **一句话**：模型在回复里用标记指名表情，扩展把标记渲染成表情图片。
-- **当前阶段**：票 01–10 全部已实现——01 闭环：一张表情能在消息里出现、02 语法/约束/处理范围、03 生效集与宏、04 投放方式与尺寸、05 旧版本兼容路径与产出统一、06 存储与生命周期、07 调试工具/操作入口/本地化与文档、08 设置项（表情间隙、标记形态开关、总开关）、09 渲染产物变更（清单两档、未命中不再剔除标记）、10 面板版式（窄栏可用、动作按钮不换行、表情行分两行、版面节奏）。后续票据见 `.scratch/st-emote/issues/`。
+- **当前阶段**：票 01–11 全部已实现——01 闭环：一张表情能在消息里出现、02 语法/约束/处理范围、03 生效集与宏、04 投放方式与尺寸、05 旧版本兼容路径与产出统一、06 存储与生命周期、07 调试工具/操作入口/本地化与文档、08 设置项（表情间隙、标记形态开关、总开关）、09 渲染产物变更（清单两档、未命中不再剔除标记）、10 面板版式（窄栏可用、动作按钮不换行、表情行分两行、版面节奏）、11 面板交互（动作按钮图标化、说明区与两套尺寸集可折叠、非法尺寸值自动展开）。后续票据见 `.scratch/st-emote/issues/`。
 
 相关文档：
 
@@ -55,7 +55,7 @@ powershell -NoProfile -Command "New-Item -ItemType Junction -Path '<SillyTavern>
 ### 代码布局
 
 - `core/`：纯核心，不依赖 ST、不依赖 DOM，可直接用 node 运行。标记解析、生效集解析、渲染拼装、投放方式与尺寸求值、处理范围规则都在这里；票 06 起还有图片规则（`image-rules.js`）、表情库生命周期（`catalogue.js`）、表情包的读法与搜索（`library.js`）与导出包的**包清单**格式（`manifest.js`）；票 07 起还有界面文案（`i18n-catalogs.js` 是纯数据、`i18n.js` 是查找与 BCP-47 解析）、冲突检测（`conflict.js`）与「试渲染」（`preview.js`）；票 08 起 `size.js` 还多了一对**不是**一对一映射的间隙字段，`token.js` 多了两个**标记形态**开关。
-- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层（含两条路径都有效的 `restitchChat`），`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。票 07 起：`locale.js` 是「客户端是哪种语言」这**一个**事实，并把它发布给 `core/i18n.js`（其余全交给核心）；`log.js` 是唯一的控制台出口（`logInfo` / `logError`）；`commands.js` 注册 `/st-emote`；`debug-panel.js` 是调试区（试渲染 + 重新渲染）。`ui.js` 只剩表情包的列表与行。
+- `adapter/`：ST 适配层，只做搬运（读写设置、上传、设置面板、把核心结果送进 DOM）。两条渲染路径：`rendering.js` 是旧版 DOM 路径，`hook.js` 是新版官方钩子路径，`render-path.js` 负责二选一（钩子装不上就回落 DOM 路径），`render-common.js` 是两条路径共用的一层（含两条路径都有效的 `restitchChat`），`restore.js` 管关闭扩展时的还原。票 06 起：`upload.js` 是三个图片接口的调用（上传 / 删除 / 列出）加上「这条拒绝理由怎么跟用户说」这一句话；`archive.js` 负责 zip 字节的读写；`sizing-panel.js` 是投放方式与两套尺寸集的控件；`dialogs.js` 是 toast / 确认 / 输入框 / 剪贴板，每一项都有客户端 API 优先、浏览器 API 兜底两条路。票 07 起：`locale.js` 是「客户端是哪种语言」这**一个**事实，并把它发布给 `core/i18n.js`（其余全交给核心）；`log.js` 是唯一的控制台出口（`logInfo` / `logError`）；`commands.js` 注册 `/st-emote`；`debug-panel.js` 是调试区（试渲染 + 重新渲染）。票 11 起多两个小模块，两个都只管面板的观感，业务规则一概不管：`buttons.js` 是图标表与按钮工厂，`collapsible.js` 是客户 `inline-drawer` 的封装。`ui.js` 只剩表情包的列表与行。
 - `tests/`：纯核心测试 + 共享契约 + 两条适配层的对照与生命周期测试 + 面板与压缩包的集成测试。
 
 ### 图片的存储与生命周期（票 06）
@@ -92,8 +92,11 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - 票 08 的纯核心：`tests/size.test.js` 里的间隙各条（单轴、零、非法值当未设置、两个 placeholder 各是各的默认值、未命中留下的文本不吃尺寸集）、`tests/token.test.js` 里的形态开关（关掉的形态不是 token、预筛与扫描器答同一个问题、缺省即开）、`tests/preview.test.js` 无新增（形态经由 `renderOptions` 透传，两条真实路径的对照在 `render-paths.test.js`）。
 - 票 08 的适配层：`tests/render-paths.test.js` 加了「间隙到达的是图本身」与「关掉的形态在两条路径上都不生效」两组（都用共享契约断言，所以两边的差异会自己冒出来）；`tests/dom-path.test.js` 加了元素扫描读开关、两个都关时预筛短路、以及**承自票 07 遗留的那条日志字面断言**（未命中与非法尺寸两行前缀此前无人盯住，本票又走了一遍那条路径，是补上的时机）；`tests/panel.test.js` 加了形态开关、正则 JSON 随开关重生成、总开关实时退回标记、**总开关不压制试渲染**；`tests/commands.test.js` 加了 `on` / `off` 与宏空串；`tests/entry-disabled.test.js` 是**新文件**（`index.js` 每进程只跑一次，所以「启动即关」的客户端必须有自己的进程去观察）。
 - 票 09 的断言方向翻了一面：`tests/render-paths.test.js` 与 `tests/render.test.js` 里所有「未命中**消失**了」的期望都改成「**标记还在，且是这一段文本**」。`readText` / `visibleText` 两个助手没有新增任何能力——未命中现在贡献一段它们本来就看得见的普通文本。另有两条是新行为独有的钉子：HTML 形态的未命中在最终 DOM 里是文本节点（`render.test.js` 与 `dom-path.test.js` 各一条），以及代码块里的未命中仍然什么都不渲染、**连未命中都不算**（`render.test.js` 一条）。
-- 票 10 的适配层：`tests/panel.test.js` 里新增的五条。**其中「控件清单」那一条是本票唯一的硬保证**——它把面板的每一个控件拍成 `位置 :: 是什么 说了什么` 的有序列表（控件集合 87 行），版式改完必须一模一样；`PRESENTATION_HOOKS` 是唯一一个被排除的类（它挂在每个动作按钮上，不携带任何身份信息，另有专属测试盯着）。另有：表情行确实分两行、作用域与全选同属一个容器、所有动作按钮都带 `st-emote-button`、面板用到的每个类要么有规则要么登记为 `QUERY_HOOKS`（**跨两种面板状态查**，因为「缺图」「勾选」「尺寸值非法」这几个类只在那些状态下出现，单看一种状态会漏掉三分之一）。
+- 票 10 的适配层：`tests/panel.test.js` 里新增的五条。**其中「控件清单」那一条是本票唯一的硬保证**——它把面板的每一个控件拍成 `位置 :: 是什么 说了什么` 的有序列表（控件集合 87 行），版式改完必须一模一样；`PRESENTATION_HOOKS` 是被排除的类（挂在每个动作按钮上，不携带任何身份信息，另有专属测试盯着；票 11 又加进 `st-emote-icon-button`，理由相同）。另有：表情行确实分两行、作用域与全选同属一个容器、所有动作按钮都带 `st-emote-button`、面板用到的每个类要么有规则要么登记为 `QUERY_HOOKS`（**跨两种面板状态查**，因为「缺图」「勾选」「尺寸值非法」这几个类只在那些状态下出现，单看一种状态会漏掉三分之一）。
+- 票 11 的适配层：`tests/panel.test.js` 里新增的十条，全部围绕**自动化测不出来的那一半**（图标是否真的画出来、折叠点得准不准）。字体名不能靠记忆，所以**图标名不查网络也不查客户目录**：`tests/contract/font-awesome.js` 记下 `FREE_ICON_CLASSES` / `FREE_ICON_CODEPOINTS`——当初对着客户的 `public/css/fontawesome.min.css` 与 `public/webfonts/fa-solid-900.ttf` 逐个核过，**记版本号**（6.5.2）是因为免费集在 6.x 内会长大，换名字时要重新核而不是相信旧记录。测试两端都查：表里每项都得有人画（孤儿键），画出来的每个类名都得在表里，**面板上的按钮与 `EXPECTED_ICON_BUTTON_KEYS` 双向相等**。另有：每个图标按钮都带双语 `title` + `aria-label`（遍历，不是一个样例）、三个说明区默认收起且**断言类名**、非说明性设置**不在任何折叠头后面**（总开关不能被藏起来）、非法尺寸值自动展开且**改对后下次挂载能收回**、收起的尺寸集在头上标出「已改过」、点一下 `aria-expanded` 与箭头同步翻、没有自造控件。
+- 票 11 **没有重新生成控件清单**——改完之后 87 行快照与票 10 提交的**逐字节相同**。核对办法有两条，都可复跑：快照块 `git diff` 为空；另在四种面板状态下（普通 / 服务器无文件 / 角色卡引用缺失的表情包 / 勾选后）分别渲染票 10 的检出与本分支的检出，把每个控件的 `位置 :: 标签 类型 id 类名 文件过滤 select 选项 说了什么` 排成文本再 `diff`——除 `st-emote-icon-button` 这个新增的共享类之外**完全一致**（把该类归一化后 diff 为空）。
 - 仍然只能在真实 ST 里验收的：流式生成时的即时出图、面板观感、净化是否保留图上的 `style` 属性、净化是否给两个类名都补上 `custom-` 前缀、**ST 切换语言后面板是否跟着变**（ST 自己会刷新页面，扩展只读一次语言）、**`SillyTavern.libs.showdown` 在真机上是否可用以及我们的开关是否够用**。
+- 票 11 追加的（同一类）：**每一个图标是否真的画出来了，一个空白都没有**（codepoint 已经核过，但「核过」不等于「看得见」）；**悬停提示在深色/浅色主题下读不读得清**；**图标与旁边文字基线齐不齐、`min-width: 2.2em` 的点击区域够不够大**；**折叠块的展开/收起动画与客户自己的抽屉是否一致、`tab` 能不能走到折叠头、`enter`/`space` 能不能展开**（jsdom 没有 jQuery，这几项一条都测不了）；**收起的尺寸集，那两个「已改过」小标记在窄栏里挤不挤**；**`fa-trash-can`（删表情包）与 `fa-trash-arrow-up`（批量删除）并排时，用户分不分得清哪个是哪个**。
 - 票 08 追加的（同一类，都得在真机上看一眼）：**形态关掉后那份 prompt-only 正则 JSON 导入正则扩展的实际行为**（我们只断言了生成的 `findRegex` 字符串，正则扩展本身只能在真机验）；**间隙的观感**（inline 之间、块级之间、混排、窄面板与小字号下 `em` 是否还合适）；**流式生成途中改设置**；**总开关关掉后含块后图的聊天立刻退回标记**（必须走 restitch，见 `restore.js` 的注释）与再打开后图立刻回来；**多出的几个控件在一行里挤不挤**。
 
 ### 界面文案与日志（票 07）
@@ -155,6 +158,25 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - **作用域与「全选」同一行**：`.st-emote-pack-controls` 里放 `.st-emote-scopes` 与 `.st-emote-selection` 两个子组。原先 `.st-emote-scopes` 上的 `flex-basis: 100%` 会硬撑出一行，那是「最不需要空间的控件占了最多纵向空间」的直接成因，已删。
 - **`min-width: 0` 用在会伸缩的 flex 子项上**：输入框、select、`.st-emote-actions`。flex 子项的自动最小尺寸是**内容**尺寸，没有这一条输入框就会撑到「曾经输入过的最长标签」那么宽而溢出——截图里「测试表情,详」是这么来的，与 `flex: 2` / `flex: 1` 的比例无关。固定尺寸的东西（缩略图、勾选框）**不要**加，它们本来就该固定。
 - **分块用间距和细线，不用卡片**：ST 的 `inline-drawer` 已经是一层卡片。**加块标题要在中英两份目录里同时加句子**，所以除非确实说不清，一律用间距解决。
+
+### 面板的按钮与折叠约定（票 11）
+
+两件零件，票 12（表情网格）直接接着用，**不要再自造第三种写法**。
+
+**按钮图标化（`adapter/buttons.js`）**
+
+- **图标名一张表，两半都要查**：`ACTION_ICONS`（语义名 → 类名）是**唯一**出现类名串的地方，与 `PLACEMENT_LABEL_KEYS` / `PACK_STATE_LABEL_KEYS` 同一写法。查不到名字 FA **画成空白且不报错**——所以类名必须同时出现在 `ACTION_ICONS` 与 `tests/contract/font-awesome.js` 的 `FREE_ICON_CLASSES` / `FREE_ICON_CODEPOINTS`（对照客户自带字体的 codepoint 录下的证据，**两份表对不上就挂**）。新增按钮要过孤儿键测试：表里每一项都得有人画。
+- **`iconButton(icon, label, className)` 三件套**：类名 `menu_button st-emote-button st-emote-icon-button`，`title` 与 `aria-label` **都**填本地化句子，句子里套一个 `<i class="fa-solid fa-x st-emote-icon" aria-hidden="true">`。骨架里那三个有 id 的按钮走 `iconize()`（保留 id）；`filePickerButton(icon, label, options, onFiles)` 同签名。**`title` 与 `aria-label` 同源同键，所以翻译不可能只落到一边。**
+- **动作才图标化，标签一律留字**。下拉框标题、字段名、复选框说明、那几段提示、还有「HTML tag form:」这种冒号前缀**全都不许动**。这是本票的硬边界。
+- **尺寸与对齐只有一条规则**：`.st-emote-icon { font-size: 0.95em; line-height: 1 }` 加 `.menu_button.st-emote-button.st-emote-icon-button { min-width: 2.2em }`。不要给单个按钮写字号。
+
+**可折叠（`adapter/collapsible.js`）**
+
+- **用客户自己的 `inline-drawer-*`**，不要 `<details>`、不要手写 max-height 动画。`collapsibleSection({ title, open, className })` 返回 `{ section, toggle, content, icon, setExpanded }`；`collapseBlock(block, title)` 把骨架里现成的一段包起来。**有测试断言这些类名**，所以「退回自造」是可测的。
+- **toggle 必须是 section 的直接子元素**，客户端的点击委托按 `>.inline-drawer-header` 找图标、按 `>.inline-drawer-content` 找内容，嵌深一层就永远打不开。
+- **`aria-expanded` 写在 toggle 上，本扩展自己维护**：客户端只做动画与 `fa-circle-chevron-*` 切换，**从不写这个属性**。我们的监听器在目标阶段跑（早于 document 上的委托），**且刻意不碰 `content.style.display`**——`slideToggle` 靠当时的可见性决定方向，我们先改了会让它往反方向滑。
+- **折叠绝不能藏住错误**：非法尺寸值的提示就在输入框旁边，收到起就看不见。`buildSizeSet` 遇到非法值**自动展开并说明原因**（`size.openedBecauseInvalid`），值改对或清空后下次挂载回到默认。**任何要放提示的控件，想清楚它在不在某个默认收起的区块里。**
+- **折叠状态不持久化**：刷新回默认。持久化要决定存哪、怎么与票 08 的 `settings` 合并，是单独的票。设置区不随 `refresh()` 重建，所以编辑过程中天然保持。
 
 ## 待补充
 
