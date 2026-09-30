@@ -12,6 +12,7 @@ import {
     ensureSizeSet,
     ensureSizeSets,
     evaluateSize,
+    isUsableSizeField,
     readSizeSet,
     validateFitMode,
     validateSizeValue,
@@ -73,6 +74,26 @@ test('readSizeSet keeps valid values, drops invalid ones and reports them', () =
     assert.equal(read.fit, 'cover');
     assert.equal(read.maxWidth, '');
     assert.deepEqual(invalid, [{ field: 'maxWidth', value: 'wide' }]);
+});
+
+test('every panel field is asked by its own rule, and the fill mode is not a length', () => {
+    // The panel decides whether a 尺寸集 holds something it cannot render by asking
+    // this about each field in `SIZE_PANEL_FIELDS`, and `fit` is in that list
+    // holding `cover` / `contain` / `fill`. Answering the whole list with the
+    // length validator made every set whose Fill was ever chosen look broken, so
+    // the settings panel opened that section by itself on every mount.
+    for (const mode of ['cover', 'contain', 'fill', '']) {
+        assert.equal(isUsableSizeField('fit', mode), true, `"${mode}" is refused as a fill mode`);
+    }
+    assert.equal(isUsableSizeField('fit', 'squish'), false);
+    assert.equal(isUsableSizeField('fit', '3em'), false, 'a length is not a fill mode either');
+
+    // Every other field keeps the length rule, empty included.
+    for (const field of SIZE_PANEL_FIELDS.filter((name) => name !== 'fit')) {
+        assert.equal(isUsableSizeField(field, ''), true, `${field} refuses its own empty value`);
+        assert.equal(isUsableSizeField(field, '3em'), true, `${field} refuses a size`);
+        assert.equal(isUsableSizeField(field, 'wide'), false, `${field} accepts a word`);
+    }
 });
 
 test('an unset inline size falls back to max-height 3em and a 0.15em gap', () => {

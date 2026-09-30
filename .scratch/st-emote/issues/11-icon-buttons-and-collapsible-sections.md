@@ -164,6 +164,15 @@ FA 的图标是按名字查的,**查不到就是空白,没有报错**。所以:
 - 最有分量的两条:控件清单一条没改就过了,以及孤儿键测试的**双向**版本——只做单向的话,删掉一个按钮之后它照样绿,那正是它要防的那次改动。
 - **这 11 条没有一条能说明图标画出来了。** 字体核对证明「有那个 codepoint」,不证明「看得见」;`aria-expanded` 与箭头同步只证明**我们那一半**和客户端约定一致,jsdom 里没有 jQuery,客户端的点击委托**一次都没被跑到**。所以下面那张清单不是客套,是这一票唯一没有兜底的部分。
 
+### 真机上看出来的：「自动展开」把**填充方式**也当成了非法值
+
+用户在真机面板上看到「Inline size」每次挂载都是展开的,头上挂着 `!`,提示是「needs a number with em, px or %」。查下来是本票那条规则的实现问错了问题:
+
+- `SIZE_PANEL_FIELDS` 里有 `fit`,而它存的是 `cover` / `contain` / `fill`——**没有一个是长度**。「这一组是不是存了坏值」用 `validateSizeValue` 问遍整张表,于是**选过填充方式的每一组都被判成存了坏值**,每次挂载自己展开、头上挂 `!`,而 `!` 的句子在讲一个用户从没打过的数字。改法:`core/size.js` 加 `isUsableSizeField(field, value)`,`fit` 走 `validateFitMode`,其余走 `validateSizeValue`;头的句子也跟着字段走（填充方式被拒绝时用新增的 `size.invalidFitHint`）。
+- 顺带查出**同一处的第二个错**:`buildFitField` 收的是 `stored.fit`（一个字符串）,函数体里又读成 `stored.fit`(即 `undefined`),所以**下拉永远显示 default**——渲染走的是存储里的 `contain`,面板却跟用户说自己没设过填充方式。JSDoc 把参数标成 `SizeSet` 是同一个错的另一半。参数改名成 `value`,类型改对。
+
+**票 11 的自动展开规则本身不动**:一个真的存了坏值的尺寸集仍然自己展开,那正是本票要防的事(折叠藏住错误)。要改的是「什么算坏值」。这两条由 `tests/panel.test.js` 的「a 尺寸集 whose Fill was chosen is not a 尺寸集 holding a bad value」与 `tests/size.test.js` 的「every panel field is asked by its own rule」钉住——**第一版快照只记 select 的选项、不记选中值,所以下拉显示错值这一条当时测不出来**,新测试里加了对 `select.value` 的断言。
+
 ## 待人工验收（需要人拿真机看）
 
 **全部未验证。** 这一票的产物是图标与折叠,jsdom 既没有排版引擎也没有 jQuery,`npm test` 对「好不好用」一个字都说不出来。下面每一条都需要人在真实面板上看一眼:

@@ -244,6 +244,10 @@ const EN = {
     'size.marginX': 'Gap between stickers (left/right)',
     'size.marginY': 'Gap between stickers (top/bottom)',
     'size.invalidHint': 'needs a number with em, px or %',
+    // The same mark, said to a fill mode. It needs its own sentence because the
+    // one above is a rule about lengths: shown next to `cover` it would be advice
+    // about a number the user never typed.
+    'size.invalidFitHint': 'is not one of cover, contain or fill',
     // Marks a 尺寸集 in a collapsed panel, where its seven fields cannot be
     // seen. The one for a value that is not a size is a bare glyph with the
     // field's own hint as its tooltip: the section opens itself in that case, so
@@ -539,6 +543,7 @@ const ZH_CN = {
     'size.marginX': '表情之间的空隙（左右）',
     'size.marginY': '表情之间的空隙（上下）',
     'size.invalidHint': '需要数字加 em、px 或 %',
+    'size.invalidFitHint': '不是 cover、contain 或 fill 之一',
     'size.customized': '已改过',
     'size.invalidMark': '!',
 

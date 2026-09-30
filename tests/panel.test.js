@@ -1663,6 +1663,46 @@ test('a 尺寸 set with every value valid opens collapsed again on the next moun
     });
 });
 
+test('a 尺寸集 whose Fill was chosen is not a 尺寸集 holding a bad value', async () => {
+    // The one that made the settings panel open by itself. `fit` is in
+    // `SIZE_PANEL_FIELDS` and holds `cover` / `contain` / `fill`, and the check
+    // that decides whether a set holds something the renderer cannot use was the
+    // *length* rule — so a user who had ever picked a Fill mode got that section
+    // expanded on every mount, with a `!` whose tooltip told them to type a number
+    // with em, px or % and no field-level hint anywhere, because the field it was
+    // complaining about is a select.
+    await withPanelMounted({
+        settings: { sizes: { inline: { fit: 'contain' } } },
+    }, ({ document }) => {
+        for (const section of document.querySelectorAll('.st-emote-size-set')) {
+            assert.equal(
+                section.querySelector('.inline-drawer-toggle').getAttribute('aria-expanded'),
+                'false',
+                'a chosen fill mode opened the section',
+            );
+            assert.equal(section.querySelector('.st-emote-size-set-invalid'), null);
+        }
+        // Still marked as changed — the value is real, it is just not a size —
+        // and still on the select, so collapsing the section hides nothing and
+        // the panel does not claim "default" to a user who chose a mode.
+        const [inline, block] = document.querySelectorAll('.st-emote-size-set');
+        assert.ok(inline.querySelector('.st-emote-size-set-mark'), 'a customised set is not marked');
+        assert.equal(block.querySelector('.st-emote-size-set-mark'), null, 'an untouched set is marked');
+        assert.equal(inline.querySelector('select').value, 'contain');
+    });
+
+    // A fill mode the select cannot produce — it can only arrive from settings
+    // written outside the panel — is still refused, and now says so in words that
+    // are about a fill mode.
+    await withPanelMounted({
+        settings: { sizes: { inline: { fit: 'squish' } } },
+    }, ({ document }) => {
+        const section = document.querySelector('.st-emote-size-set');
+        assert.equal(section.querySelector('.inline-drawer-toggle').getAttribute('aria-expanded'), 'true');
+        assert.equal(section.querySelector('.st-emote-size-set-invalid').title, 'is not one of cover, contain or fill');
+    });
+});
+
 test('a 尺寸 set that has been changed says so on its collapsed header', async () => {
     // Both sets are seven empty fields by default, so two collapsed sets look
     // identical and neither is worth opening. The one with a value in it is the

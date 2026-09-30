@@ -31,6 +31,7 @@ import {
     SIZE_PANEL_FIELDS,
     SIZE_SETS,
     defaultSizeValue,
+    isUsableSizeField,
     validateFitMode,
     validateSizeValue,
 } from '../core/size.js';
@@ -135,7 +136,7 @@ export function buildStickerPlacementSelect(context, sticker, onChange) {
  */
 function buildSizeSet(context, sizeSet, settings, onChange) {
     const stored = settings.sizes[sizeSet];
-    const invalidField = SIZE_PANEL_FIELDS.find((field) => !validateSizeValue(stored[field]).ok);
+    const invalidField = SIZE_PANEL_FIELDS.find((field) => !isUsableSizeField(field, stored[field]));
     const customized = SIZE_PANEL_FIELDS.some((field) => String(stored[field] ?? '').trim() !== '');
 
     const { section, toggle, content, icon } = collapsibleSection({
@@ -161,7 +162,15 @@ function buildSizeSet(context, sizeSet, settings, onChange) {
         marks.append(sizeSetMark(t('size.customized')));
     }
     if (invalidField !== undefined) {
-        marks.append(sizeSetMark(t('size.invalidMark'), 'st-emote-size-set-invalid', t('size.invalidHint')));
+        // The sentence follows the field: "needs a number with em, px or %" is
+        // right advice for a length and nonsense for a fill mode, and a refused
+        // fill mode is the one value that can only have arrived from outside the
+        // panel — the select cannot produce one.
+        marks.append(sizeSetMark(
+            t('size.invalidMark'),
+            'st-emote-size-set-invalid',
+            invalidField === 'fit' ? t('size.invalidFitHint') : t('size.invalidHint'),
+        ));
     }
 
     const fields = document.createElement('div');
@@ -228,11 +237,21 @@ function sizeSetMark(text, className = '', title = '') {
  * The fill-mode control: a `<select>`, because the three modes are a closed set
  * rather than something to hand-type.
  *
- * @param {import('../core/size.js').SizeSet} stored
+ * **The parameter is the stored mode, not the stored set.** It arrived as
+ * `stored.fit` from the caller and was then read as `stored.fit` again, so the
+ * select was always built from `undefined` and always showed "default" — a user
+ * with `contain` stored was shown a panel that said otherwise, and had to open
+ * a section to change a value they could not see. The value is the whole
+ * argument, so it is named for what it is.
+ *
+ * @param {string} value - The stored 填充方式. Empty means unset, and a mode the
+ *   select cannot offer is shown as unset as well: the store keeps what was typed
+ *   and the render path already treats it as unset, so the panel must not
+ *   display a mode that is not in effect.
  * @param {(fit: string) => void} onChange
  * @returns {Element}
  */
-function buildFitField(context, stored, onChange) {
+function buildFitField(context, value, onChange) {
     const wrapper = document.createElement('label');
     wrapper.className = 'st-emote-field';
 
@@ -248,7 +267,7 @@ function buildFitField(context, stored, onChange) {
     for (const mode of FIT_MODES) {
         select.append(option(mode, mode));
     }
-    const check = validateFitMode(stored.fit);
+    const check = validateFitMode(value);
     select.value = check.ok ? check.value : '';
     select.addEventListener('change', () => onChange(select.value));
 

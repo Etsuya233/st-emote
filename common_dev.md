@@ -125,7 +125,7 @@ npm test         # node --test，发现并运行 tests/*.test.js
 
 三件互不相干的事，只落在「设置 + 面板」上。它们各有**不止一个**读点，列在这里是因为漏掉一个读点的后果都是同一类：面板上看着关了，实际还在生效。
 
-- **间隙**（`marginX` / `marginY`，每套尺寸集各一对）。`core/size.js` 里它们是**第一处非一对一映射的字段**：`SIZE_PROPERTIES` 仍只放一对一的那五个，`SIZE_DEFAULTS` 改成**按存储字段名索引**（否则两个字段都映射到 `margin` 时，两个输入框的 placeholder 会显示同一个默认值），`SIZE_PANEL_FIELDS = [...SIZE_FIELDS, ...SIZE_MARGIN_FIELDS]` 才是面板与存储形状的字段来源。声明在 `evaluateSize` 里作为一个显式步骤发出，`margin: <y> <x>`。`style.css` 里 `.custom-st-emote-block` 的 `margin` **已删**——两条来源互相打补丁是后面极难查的一类 bug。
+- **间隙**（`marginX` / `marginY`，每套尺寸集各一对）。`core/size.js` 里它们是**第一处非一对一映射的字段**：`SIZE_PROPERTIES` 仍只放一对一的那五个，`SIZE_DEFAULTS` 改成**按存储字段名索引**（否则两个字段都映射到 `margin` 时，两个输入框的 placeholder 会显示同一个默认值），`SIZE_PANEL_FIELDS = [...SIZE_FIELDS, ...SIZE_MARGIN_FIELDS]` 才是面板与存储形状的字段来源。声明在 `evaluateSize` 里作为一个显式步骤发出，`margin: <y> <x>`。`style.css` 里 `.custom-st-emote-block` 的 `margin` **已删**——两条来源互相打补丁是后面极难查的一类 bug。**这张表是字段的来源，因此也是「每个字段有自己的校验规则」的表**（`fit` 用 `validateFitMode`，其余用 `validateSizeValue`；面板问的是 `isUsableSizeField`，见「折叠绝不能藏住错误」下面那一条）。
 - **标记形态开关**（`bracketForm` / `tagForm`）。核心只有 `core/token.js` 的 `findCandidates` 一处，但**五个调用方都得收口**，否则「关了」不等于「不生效」：`adapter/rendering.js` 的元素扫描（DOM 路径上 raw `<sticker>` 是元素，不走 `findTokens`）、同一文件的 `tokenPrefixes` 预筛、`adapter/regex.js` 的 prompt-only 正则 JSON、`render-path.js` 的 `allowStickerTag`（形态关掉就不开口子，**顺带让两条路径对「不处理」表现一致**）、面板上的标签名输入框置灰。关闭的形态**不是未命中**——它不再是语法，文本原样保留。
 - **总开关**（`settings.enabled`，默认 `true`）。**不新增第三层门**：`adapter/restore.js` 的 `renderingEnabled` + `stopRendering` / `resumeRendering` 已经是现成机制，ST 自己的扩展开关走的就是这一套。`setEnabled(context, enabled)` 放在 `adapter/render-path.js`（它要同时调 `installRendering`、`stopRendering`、`rerenderChat`，而 `restore.js` 不能反过来依赖 `render-path.js`），面板与 `/st-emote on|off` 共用它。`index.js` 在 jQuery 回调里按 `isEnabled(context)` 决定要不要装路径——**启动时就是关的**的客户端连订阅都不会有，比事后用标志拦更强。
 - 开关的默认值一律是**开**，`ensureSettings` 用 `!== false` 归一化：老版本写下的设置里根本没有这些键，把「键不存在」读成「用户关掉了」会在升级时静默关停一个能用的扩展。
@@ -198,7 +198,9 @@ npm test         # node --test，发现并运行 tests/*.test.js
 - **用客户自己的 `inline-drawer-*`**，不要 `<details>`、不要手写 max-height 动画。`collapsibleSection({ title, open, className })` 返回 `{ section, toggle, content, icon, setExpanded }`；`collapseBlock(block, title)` 把骨架里现成的一段包起来。**有测试断言这些类名**，所以「退回自造」是可测的。
 - **toggle 必须是 section 的直接子元素**，客户端的点击委托按 `>.inline-drawer-header` 找图标、按 `>.inline-drawer-content` 找内容，嵌深一层就永远打不开。
 - **`aria-expanded` 写在 toggle 上，本扩展自己维护**：客户端只做动画与 `fa-circle-chevron-*` 切换，**从不写这个属性**。我们的监听器在目标阶段跑（早于 document 上的委托），**且刻意不碰 `content.style.display`**——`slideToggle` 靠当时的可见性决定方向，我们先改了会让它往反方向滑。
-- **折叠绝不能藏住错误**：非法尺寸值的提示就在输入框旁边，收到起就看不见。`buildSizeSet` 遇到非法值**自动展开并说明原因**（`size.openedBecauseInvalid`），值改对或清空后下次挂载回到默认。**任何要放提示的控件，想清楚它在不在某个默认收起的区块里。**
+- **折叠绝不能藏住错误**：非法尺寸值的提示就在输入框旁边，收到起就看不见。`buildSizeSet` 遇到非法值**自动展开并说明原因**，值改对或清空后下次挂载回到默认。**任何要放提示的控件，想清楚它在不在某个默认收起的区块里。**
+  - **「非法」由每个字段自己的规则回答**，用 `isUsableSizeField(field, value)`（`core/size.js`），不能拿 `validateSizeValue` 问遍 `SIZE_PANEL_FIELDS`：那张表里有 `fit`，而它存的是 `cover` / `contain` / `fill`，**没有一个是长度**。问错的后果不是某处显示不对，而是**选过填充方式的每一套尺寸集都被当成「存了坏值」**，于是每次挂载都自己展开、头上挂一个 `!`，而那个 `!` 的句子是「需要数字加 em、px 或 %」——用户从没打过数字。头的句子也跟着字段走：填充方式被拒绝时是 `size.invalidFitHint`。
+  - **面板要显示真正在生效的值**。`buildFitField` 收的是 `stored.fit`（一个字符串），曾经在函数体里又读成 `stored.fit`（`undefined`），于是下拉**永远是 default**——渲染走的是存储里的 `contain`，面板却说着 `default`。**控件的参数名要跟它收的东西对得上**，JSDoc 写错类型（写成 `SizeSet`）是同一个错的另一半。
 - **折叠状态不持久化**：刷新回默认。持久化要决定存哪、怎么与票 08 的 `settings` 合并，是单独的票。设置区不随 `refresh()` 重建，所以编辑过程中天然保持。
 - **票 13 之后**：接入与工具那一块的四个折叠段**连成一片**（`.st-emote-section + .st-emote-section { margin-top: 0 }`），因为块标题已经说了它们是一类东西，每对之间留缝反而自相矛盾。视觉组里的两个尺寸集同理。
 - **调试区那两个按钮不是一件事，形状上就要说清楚**：`▶ Render` 读的是它上面那个框，`↻ Re-render` 重画的是**整个聊天**——而聊天根本不在这个面板上。原来两个并排在同一个按钮行里，读起来像一个动作的两个名字，而「重画你的聊天」恰好是最不该被误按的那个。**重画按钮在预览输出框下面、单独一行、上面一条细线**（`.st-emote-debug-repaint`），并且**带一句可见的说明文字**（`panel.rerender`，与它的 `title` 同键）——孤零零一个图标在孤零零一行里，没有别的东西可以对照着读懂。有一条测试断言两者不同行。

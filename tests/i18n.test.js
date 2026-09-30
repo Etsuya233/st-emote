@@ -204,7 +204,7 @@ test('the catalog carries no value nobody can reach', () => {
         'placement.follow', 'placement.override', 'placement.label',
         'size.inline', 'size.block', 'size.minWidth', 'size.minHeight', 'size.maxWidth',
         'size.maxHeight', 'size.fit', 'size.fitDefault', 'size.marginX', 'size.marginY',
-        'size.invalidHint', 'size.customized', 'size.invalidMark',
+        'size.invalidHint', 'size.invalidFitHint', 'size.customized', 'size.invalidMark',
         'constraint.packName', 'constraint.label', 'constraint.description',
         'constraint.htmlTag', 'constraint.reason.empty', 'constraint.reason.too-long',
         'constraint.reason.forbidden-character', 'constraint.reason.newline',

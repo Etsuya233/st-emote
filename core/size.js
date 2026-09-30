@@ -180,6 +180,27 @@ export function validateFitMode(value) {
 }
 
 /**
+ * Can this stored field's value be rendered with, as it stands?
+ *
+ * **The fill mode is asked by its own rule, not by the length rule.** `fit` is in
+ * `SIZE_PANEL_FIELDS` like every other field, and it holds `cover` / `contain` /
+ * `fill` — none of which is a length. Answering the whole list with
+ * `validateSizeValue` therefore calls every set whose Fill was ever chosen a set
+ * holding a bad value, which is what made the settings panel open that section by
+ * itself on every mount and hang a `!` on it whose sentence ("needs a number with
+ * em, px or %") has nothing to do with what the user typed.
+ *
+ * @param {unknown} field - Stored field name, e.g. `marginX`.
+ * @param {unknown} value - The value stored under it.
+ * @returns {boolean}
+ */
+export function isUsableSizeField(field, value) {
+    return field === 'fit'
+        ? validateFitMode(value).ok
+        : validateSizeValue(value).ok;
+}
+
+/**
  * Give a stored 尺寸集 the full field set, so the settings panel always has an
  * input to bind to. No validation happens here: an invalid value is kept as
  * typed, because it is not a reason to stop the user from editing.
